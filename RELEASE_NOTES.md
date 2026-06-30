@@ -1,5 +1,26 @@
 # Release Notes
 
+## v2.2 (2026-06-30)
+
+### ✨ New Features
+
+- **Mid‑swing direction abort** — `display_pov()` checks MPU6050 gyro after every column; if swing direction reverses mid‑render, LEDs turn off immediately instead of showing a garbled trailing image
+
+### 🐛 Bug Fixes
+
+- **`display_pov()` first‑column false abort** — `prev_gz_val` now synced to current gyro value at render start; previously held the pre‑zero‑crossing (opposite‑direction) value, causing an instant abort on the first column
+- **`load_image_to_sram()` buffer safety** — old image buffer is now freed only after the new file is successfully read; a missing or corrupt file no longer wipes the currently displayed image
+
+### 🔧 Improvements
+
+- **Code cleanup** — removed unused globals (`last_swing_time`, `IDLE_TIMEOUT`), dead commented‑out code blocks, and stale comments referencing FastLED
+- **`clear_apa102_fast()`** — LED off value changed from `0xE0000000` to `0xFF000000` for clearer intent (APA102 brightness = 0)
+- **`handle_list_images()` heap safety** — JSON string pre‑allocated with `reserve(512)` to reduce heap fragmentation
+- **Offline web UI** — removed Google Fonts dependency (`Outfit` replaced with `system-ui`); page renders instantly without internet access
+- **Debug log** — `display_pov()` runtime log disabled by default (`#if 0`); enable for debugging
+
+---
+
 ## v2.1 (2026-06-30)
 
 ### ✨ New Features

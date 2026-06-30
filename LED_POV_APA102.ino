@@ -163,12 +163,6 @@ void delete_image(uint8_t index) {
 
 // --- LittleFS에서 이미지를 SRAM으로 적재하는 함수 ---
 void load_image_to_sram(uint8_t index) {
-  if (img_buffer != nullptr) {
-    free(img_buffer);
-    img_buffer = nullptr;
-    img_width = 0;
-  }
-
   if (!image_slots_used[index]) {
     Serial.printf("[SRAM] 이미지 %d: 슬롯이 비어 있습니다.\n", index);
     return;
@@ -191,31 +185,38 @@ void load_image_to_sram(uint8_t index) {
   }
 
   // 1. 가로 해상도(Width) 읽기 (2바이트, Big Endian)
+  uint16_t new_width = 0;
   if (file.available() >= 2) {
     uint8_t h_byte = file.read();
     uint8_t l_byte = file.read();
-    img_width = (h_byte << 8) | l_byte;
+    new_width = (h_byte << 8) | l_byte;
   }
 
-  if (img_width == 0 || img_width > 300) {
-    Serial.printf("[LittleFS] 유효하지 않은 가로 크기: %d px\n", img_width);
+  if (new_width == 0 || new_width > 300) {
+    Serial.printf("[LittleFS] 유효하지 않은 가로 크기: %d px\n", new_width);
     file.close();
     return;
   }
 
-  // 2. RGB 데이터 영역 메모리 할당 (Width * 72 * 3 bytes)
-  size_t data_size = img_width * NUM_LEDS * 3;
-  img_buffer = (uint8_t*)malloc(data_size);
-  if (img_buffer == nullptr) {
+  // 2. 새 RGB 데이터 영역 메모리 할당
+  size_t data_size = new_width * NUM_LEDS * 3;
+  uint8_t* new_buffer = (uint8_t*)malloc(data_size);
+  if (new_buffer == nullptr) {
     Serial.println("[Memory] SRAM 메모리 할당 실패!");
-    img_width = 0;
     file.close();
     return;
   }
 
-  // 3. 파일에서 데이터를 SRAM으로 한 번에 읽기
-  size_t read_bytes = file.read(img_buffer, data_size);
+  // 3. 파일에서 데이터 읽기
+  size_t read_bytes = file.read(new_buffer, data_size);
   file.close();
+
+  // 4. 새 데이터가 확보된 후에만 기존 버퍼 교체
+  if (img_buffer != nullptr) {
+    free(img_buffer);
+  }
+  img_buffer = new_buffer;
+  img_width = new_width;
 
   Serial.printf("[LittleFS] 이미지 %d 로드 성공: %d x 72 px (%d bytes 읽음) [%s]\n",
     index, img_width, read_bytes, image_names[index]);
@@ -318,7 +319,9 @@ void handle_image_upload() {
 
 // --- 웹서버 API 핸들러 ---
 void handle_list_images() {
-  String json = "{";
+  String json;
+  json.reserve(512);  // heap 단편화 방지
+  json = "{";
   json += "\"current\":" + String(current_image_index) + ",";
   json += "\"images\":[";
   bool first = true;
@@ -445,7 +448,7 @@ void handle_image_data() {
 
 // --- 버튼 처리 함수 ---
 void indicate_image_index() {
-  // 모든 LED 버퍼를 먼저清零 (이전 이미지 데이터 제거)
+  // 모든 LED 버퍼를 먼저 초기화 (이전 이미지 데이터 제거)
   for (int i = 0; i < NUM_LEDS; i++) {
     leds[i].r = 0;
     leds[i].g = 0;
@@ -577,11 +580,11 @@ void setup() {
 }
 void clear_apa102_fast() {
   SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
-  SPI.write32(0);
+  SPI.write32(0);  // 시작 프레임
   for (int i = 0; i < NUM_LEDS; i++) {
-    SPI.write32(0xE0000000);
+    SPI.write32(0xFF000000);  // brightness=0 → LED OFF
   }
-  // 종료 프레임
+  // 종료 프레임 (APA102 사양: LED당 1/2비트 이상의 1 필요)
   for (int i = 0; i < (NUM_LEDS + 15) / 16; i++) SPI.write(0xFF);
   SPI.endTransaction();
 }
@@ -625,6 +628,15 @@ void display_pov() {
     delayMicroseconds(start_delay * 1000);
   }
 
+  // ═══ prev_gz_val을 현재 swing 방향으로 동기화 ═══
+  // loop()의 prev_gz_val는 교차 직전 반대방향 값이므로, 이대로 검사하면
+  // 첫 컬럼에서 무조건 부호불일치로 중단됨 → 현재 gz로 덮어쓰기
+  {
+    int16_t ax, ay, az, gx, gy, gz;
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    prev_gz_val = gz;
+  }
+
   // 방향에 맞춰 이미지를 정방향 또는 역방향 출력
   for (uint16_t col = 0; col < img_width; col++) {
     unsigned long col_start_us = micros();  // 각 열 출력 시작 시각 기록
@@ -632,7 +644,7 @@ void display_pov() {
     // 흔드는 방향이 우->좌 이면 이미지를 역순으로 뿌림 (좌우 반전 방지)
     uint16_t target_col = swing_direction ? col : (img_width - 1 - col);
 
-    // SRAM 이미지 버퍼에서 72개 LED용 RGB 데이터를 가져와 FastLED 버퍼에 쓰기
+    // SRAM 이미지 버퍼에서 72개 LED용 RGB 데이터를 leds[] 에 복사
     size_t col_offset = target_col * NUM_LEDS * 3;
     for (int i = 0; i < NUM_LEDS; i++) {
       size_t pixel_offset = col_offset + (i * 3);
@@ -644,10 +656,24 @@ void display_pov() {
     // 초고속 하드웨어 SPI 직접 전송 호출
     show_apa102_fast();
 
-    // if (MPUInterrupt){  // 출력중에 인터럽트 걸리면 빠져 나가기
-    //   clear_apa102_fast();
-    //   return;
-    // }
+    // ═══ 컬럼 출력 후 각속도 부호변화 감시: 방향이 바뀌면 중단 ═══
+    // (최초 3개 컬럼은 건너뛰어 swing 진입 직후 오탐지 방지)
+    if (col >= 3 && MPUInterrupt) {
+      MPUInterrupt = false;
+      int16_t ax, ay, az, gx, gy, gz;
+      mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+      if ((prev_gz_val > 0 && gz < 0) || (prev_gz_val < 0 && gz > 0)) {
+        if (abs(prev_gz_val - gz) > 400) {
+          // 스윙 방향 전환 감지 → 렌더링 중단
+          prev_gz_val = gz;
+          last_zero_crossing_time = millis();
+          clear_apa102_fast();
+          Serial.println("[POV] 중간 방향전환 감지 → 렌더링 중단");
+          return;
+        }
+      }
+      prev_gz_val = gz;
+    }
 
     // 송신 지연 시간을 뺀 실질 시간만큼만 대기하여 정밀 시간 보상 복원
     long elapsed_us = micros() - col_start_us;
@@ -661,14 +687,12 @@ void display_pov() {
   clear_apa102_fast();
 
   // 실행 시간 디버그 로그 출력
+#if 0
   unsigned long duration_ms = millis() - start_pov_ms;
   Serial.printf("[POV] display_pov() 실제 실행 시간: %lu ms (목표 swing_duration: %lu ms)\n", duration_ms, swing_duration);
+#endif
 }
 
-
-// 마지막 스윙 감지 이후 경과 시간 (LED 자동 소등용)
-unsigned long last_swing_time = 0;
-const unsigned long IDLE_TIMEOUT = 1000;  // 1초 동안 스윙 없으면 LED 소등
 
 void loop() {
   // 웹서버 요청 처리
@@ -714,7 +738,7 @@ void loop() {
 
     unsigned long current_time = millis();
 
-    // 부호가 바뀐 순간, 그 차이의 절대값이 1000이 넘는지 판단
+    // 영점교차 + 델타 ≥ 400 → 스윙 방향 전환 감지
     if ((prev_gz_val > 0 && gz_val < 0) || (prev_gz_val < 0 && gz_val > 0)) {
       if (abs(prev_gz_val - gz_val) > 400) {
         unsigned long duration = current_time - last_zero_crossing_time;
@@ -722,11 +746,10 @@ void loop() {
         // 판정 성공 여부와 상관없이 기준 시점을 즉시 갱신
         last_zero_crossing_time = current_time;
 
-        // // 최소 80ms ~ 최대 800ms 편도 스윙 시간 필터링
+        // 500ms 편도 스윙 시간 필터링
         if (duration < 500) {
           swing_duration = duration;
           swing_direction = (gz_val < 0);  // 회전 부호에 따라 방향 결정
-                                           //last_swing_time = current_time;  // 마지막 유효 스윙 시간 기록
 
           Serial.printf("[POV] 스윙 디텍트! 방향: %s, 주기: %lu ms\n",
                         swing_direction ? "좌 -> 우" : "우 -> 좌", swing_duration);
@@ -738,17 +761,7 @@ void loop() {
     }
 
     prev_gz_val = gz_val;
-    //Serial.println(prev_gz_val);
+
   }
-  /*
-  // 마지막 스윙으로부터 IDLE_TIMEOUT 동안 감지 없으면 LED 소등
-  if (last_swing_time > 0 && (millis() - last_swing_time > IDLE_TIMEOUT)) {
-    last_swing_time = 0;
-    // 재활성화 시 첫 스윙부터 바로 감지되도록 기준 시간을 현재로 초기화
-    last_zero_crossing_time = millis();
-    FastLED.clear();
-    show_apa102_fast();
-    Serial.println("[POV] 정지 감지 -> LED 소등");
-  }
-   */
+
 }

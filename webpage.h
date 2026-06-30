@@ -8,7 +8,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LED POV 스틱 이미지 업로더</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-color: #0b0c10;
@@ -24,7 +23,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: 'Outfit', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
         }
 
         body {
@@ -589,21 +588,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             const bodySize = imgWidth * imgHeight * 3;
             rawBuffer = new Uint8Array(2 + bodySize);
 
-            // 헤더 작성 (2바이트 가로폭)
+            // 헤더 작성 (2바이트 가로폭, Big Endian)
             rawBuffer[0] = (imgWidth >> 8) & 0xFF;
             rawBuffer[1] = imgWidth & 0xFF;
-/*
-            let bufferIdx = 2;
-            for (let x = 0; x < imgWidth; x++) {
-                // 첫번째 LED가 아래(Y = 71)에 위치하므로, Y 루프를 71부터 0으로 역순 순회
-                for (let y = imgHeight - 1; y >= 0; y--) {
-                    const pixelIdx = (y * imgWidth + x) * 4;
-                    rawBuffer[bufferIdx++] = data[pixelIdx];     // Red
-                    rawBuffer[bufferIdx++] = data[pixelIdx + 1]; // Green
-                    rawBuffer[bufferIdx++] = data[pixelIdx + 2]; // Blue
-                }
-            }
-*/
+
             let bufferIdx = 2;
             for (let x = 0; x < imgWidth; x++) {
                 for (let y = imgHeight - 1; y >= 0; y--) {
