@@ -207,16 +207,7 @@ The name input field is automatically filled from the original file name and can
 
 ---
 
-## Notes & Known Issues
 
-- **Motion loop blocks during upload** — `is_uploading` flag prevents rendering while an image is being received, avoiding SRAM buffer corruption.
-- **Idle timeout disabled** — auto‑turn‑off logic is commented out; LEDs stay on the last frame.
-- **Interrupt‑based early abort disabled** — once `display_pov()` starts, it runs to completion without interruption.
-- **MPU6050 failure = hard lock** — if the IMU is not detected during `setup()`, the board blinks the onboard LED every 100 ms in an infinite loop.
-- **No FastLED** — APA102 is driven directly via 20 MHz hardware SPI for maximum throughput. A custom `CRGB` struct provides basic color assignment.
-- **End frame calculation** — APA102 end frame length is `(NUM_LEDS + 15) / 16` bytes, matching the protocol specification.
-
----
 
 ## License
 
