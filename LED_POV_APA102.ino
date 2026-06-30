@@ -30,10 +30,27 @@ const char* ap_ssid = "POV_Stick_AP";
 WebServer server(80);
 
 
+// --- 다중 이미지 설정 ---
+#define MAX_IMAGES 10
+#define IMG_DIR "/img"
+#define IMG_INFO_FILE "/img/info.txt"
+#define MAX_IMG_NAME_LEN 24
+
+uint8_t image_count = 0;
+uint8_t current_image_index = 0;
+char image_names[MAX_IMAGES][MAX_IMG_NAME_LEN + 1] = {0};
+bool image_slots_used[MAX_IMAGES] = {false};
+
 // --- 이미지 SRAM 버퍼 ---
 uint16_t img_width = 0;
 uint8_t* img_buffer = nullptr;
-const char* IMAGE_FILE_PATH = "/image.raw";
+String get_image_path(uint8_t index) {
+  String path = IMG_DIR;
+  path += "/";
+  path += index;
+  path += ".raw";
+  return path;
+}
 
 // --- MPU6050 인터럽트 및 모션 변수 ---
 volatile bool MPUInterrupt = false;
@@ -52,22 +69,124 @@ bool swing_direction = false;        // true: 좌->우, false: 우->좌
 File* uploadFile = nullptr;
 volatile bool is_uploading = false;
 
+// --- 버튼 상태 변수 ---
+unsigned long last_button_debounce_time = 0;
+const unsigned long DEBOUNCE_DELAY = 50;
+bool last_button_reading = HIGH;
+bool button_state = HIGH;   // 디바운스된 안정 상태
+bool button_pressed = false;
+
+// --- LittleFS 유틸리티 함수 ---
+void ensure_img_dir() {
+  if (!LittleFS.exists(IMG_DIR)) {
+    LittleFS.mkdir(IMG_DIR);
+    Serial.println("[LittleFS] /img 디렉토리 생성됨");
+  }
+}
+
+void save_image_info() {
+  File file = LittleFS.open(IMG_INFO_FILE, "w");
+  if (!file) {
+    Serial.println("[LittleFS] info.txt 쓰기 실패");
+    return;
+  }
+  file.printf("current=%d\n", current_image_index);
+  file.printf("count=%d\n", image_count);
+  for (int i = 0; i < MAX_IMAGES; i++) {
+    if (image_slots_used[i]) {
+      file.printf("%d=%s\n", i, image_names[i]);
+    }
+  }
+  file.close();
+}
+
+void load_image_info() {
+  if (!LittleFS.exists(IMG_INFO_FILE)) {
+    // 최초 부팅: 기본값으로 info.txt 생성
+    image_count = 0;
+    current_image_index = 0;
+    for (int i = 0; i < MAX_IMAGES; i++) {
+      image_slots_used[i] = false;
+      image_names[i][0] = '\0';
+    }
+    save_image_info();
+    return;
+  }
+
+  File file = LittleFS.open(IMG_INFO_FILE, "r");
+  if (!file) return;
+
+  for (int i = 0; i < MAX_IMAGES; i++) {
+    image_slots_used[i] = false;
+    image_names[i][0] = '\0';
+  }
+  image_count = 0;
+  current_image_index = 0;
+
+  while (file.available()) {
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+
+    if (line.startsWith("current=")) {
+      current_image_index = line.substring(8).toInt();
+      if (current_image_index >= MAX_IMAGES) current_image_index = 0;
+    } else if (line.startsWith("count=")) {
+      image_count = line.substring(6).toInt();
+    } else {
+      int eq = line.indexOf('=');
+      if (eq > 0) {
+        int idx = line.substring(0, eq).toInt();
+        if (idx >= 0 && idx < MAX_IMAGES) {
+          image_slots_used[idx] = true;
+          String name = line.substring(eq + 1);
+          name.toCharArray(image_names[idx], MAX_IMG_NAME_LEN + 1);
+        }
+      }
+    }
+  }
+  file.close();
+}
+
+void delete_image(uint8_t index) {
+  if (index >= MAX_IMAGES || !image_slots_used[index]) return;
+
+  String path = get_image_path(index);
+  LittleFS.remove(path);
+  image_slots_used[index] = false;
+  image_names[index][0] = '\0';
+  image_count--;
+
+  save_image_info();
+  Serial.printf("[LittleFS] 이미지 %d 삭제됨 (남은 이미지: %d)\n", index, image_count);
+}
+
 // --- LittleFS에서 이미지를 SRAM으로 적재하는 함수 ---
-void load_image_to_sram() {
+void load_image_to_sram(uint8_t index) {
   if (img_buffer != nullptr) {
     free(img_buffer);
     img_buffer = nullptr;
     img_width = 0;
   }
 
-  if (!LittleFS.exists(IMAGE_FILE_PATH)) {
-    Serial.println("[LittleFS] 이미지 파일이 존재하지 않습니다. 대기 모드.");
+  if (!image_slots_used[index]) {
+    Serial.printf("[SRAM] 이미지 %d: 슬롯이 비어 있습니다.\n", index);
     return;
   }
 
-  File file = LittleFS.open(IMAGE_FILE_PATH, "r");
+  String path = get_image_path(index);
+  if (!LittleFS.exists(path)) {
+    Serial.printf("[LittleFS] 이미지 파일 없음: %s\n", path.c_str());
+    image_slots_used[index] = false;
+    image_names[index][0] = '\0';
+    image_count--;
+    save_image_info();
+    return;
+  }
+
+  File file = LittleFS.open(path, "r");
   if (!file) {
-    Serial.println("[LittleFS] 이미지 파일 열기 실패.");
+    Serial.printf("[LittleFS] 이미지 파일 열기 실패: %s\n", path.c_str());
     return;
   }
 
@@ -98,10 +217,13 @@ void load_image_to_sram() {
   size_t read_bytes = file.read(img_buffer, data_size);
   file.close();
 
-  Serial.printf("[LittleFS] 이미지 로드 성공: %d x 72 px (%d bytes 읽음)\n", img_width, read_bytes);
+  Serial.printf("[LittleFS] 이미지 %d 로드 성공: %d x 72 px (%d bytes 읽음) [%s]\n",
+    index, img_width, read_bytes, image_names[index]);
 }
 
-// --- HTTP POST 업로드 핸들러 ---
+// --- HTTP POST 업로드 핸들러 (다중 슬롯 지원, 직접 쓰기) ---
+String upload_filename = "";
+int upload_slot = -1;
 void handle_image_upload() {
   HTTPUpload& upload = server.upload();
 
@@ -109,21 +231,58 @@ void handle_image_upload() {
     Serial.println("[Upload] 이미지 업로드 시작...");
     is_uploading = true;
 
+    // 파일명: server.arg()로 query string에서 직접 가져옴
+    Serial.printf("[Upload] args=%d, arg('name')='%s', upload.filename='%s'\n",
+      server.args(), server.arg("name").c_str(), upload.filename.c_str());
+    upload_filename = server.arg("name");
+    if (upload_filename.length() == 0) {
+      // fallback: multipart filename에서 추출
+      String disp = upload.filename;
+      if (disp.length() > 0) {
+        int lastSlash = disp.lastIndexOf('/');
+        int lastBackslash = disp.lastIndexOf('\\');
+        int start = (lastSlash > lastBackslash) ? lastSlash + 1 : lastBackslash + 1;
+        upload_filename = disp.substring(start);
+        Serial.printf("[Upload] fallback: multipart filename -> '%s'\n", upload_filename.c_str());
+      }
+    } else {
+      Serial.printf("[Upload] query string -> '%s'\n", upload_filename.c_str());
+    }
+    if (upload_filename.length() > MAX_IMG_NAME_LEN) {
+      upload_filename = upload_filename.substring(0, MAX_IMG_NAME_LEN);
+    }
+
     if (uploadFile != nullptr) {
       uploadFile->close();
       delete uploadFile;
       uploadFile = nullptr;
     }
 
-    // 파일 쓰기 모드로 생성
-    File file = LittleFS.open(IMAGE_FILE_PATH, "w");
-    if (file) {
-      uploadFile = new File(file);
+    // 빈 슬롯을 찾아서 직접 /img/N.raw 로 저장
+    upload_slot = -1;
+    for (int i = 0; i < MAX_IMAGES; i++) {
+      if (!image_slots_used[i]) {
+        upload_slot = i;
+        break;
+      }
+    }
+
+    if (upload_slot == -1) {
+      Serial.println("[Upload] 저장 공간이 가득 찼습니다!");
     } else {
-      Serial.println("[Upload] LittleFS 쓰기 파일 생성 실패.");
+      String dest = get_image_path(upload_slot);
+      LittleFS.remove(dest);  // 기존 파일 정리
+      File file = LittleFS.open(dest, "w");
+      if (file) {
+        uploadFile = new File(file);
+        Serial.printf("[Upload] 슬롯 %d에 직접 저장 시작: %s\n", upload_slot, dest.c_str());
+      } else {
+        Serial.printf("[Upload] 파일 생성 실패: %s\n", dest.c_str());
+        upload_slot = -1;
+      }
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (uploadFile && *uploadFile) {
+    if (uploadFile && *uploadFile && upload_slot >= 0) {
       uploadFile->write(upload.buf, upload.currentSize);
     }
   } else if (upload.status == UPLOAD_FILE_END) {
@@ -131,9 +290,206 @@ void handle_image_upload() {
       uploadFile->close();
       delete uploadFile;
       uploadFile = nullptr;
-      Serial.println("[Upload] 파일 저장 완료.");
     }
+
+    if (upload_slot >= 0) {
+      // 메타데이터 업데이트
+      image_slots_used[upload_slot] = true;
+      if (upload_filename.length() > 0) {
+        upload_filename.toCharArray(image_names[upload_slot], MAX_IMG_NAME_LEN + 1);
+      } else {
+        snprintf(image_names[upload_slot], MAX_IMG_NAME_LEN + 1, "image_%d.raw", upload_slot);
+      }
+      current_image_index = upload_slot;
+      image_count = 0;
+      for (int i = 0; i < MAX_IMAGES; i++) {
+        if (image_slots_used[i]) image_count++;
+      }
+      save_image_info();
+      Serial.printf("[Upload] 이미지 %d (%s) 저장 완료 (총 %d개)\n",
+        upload_slot, image_names[upload_slot], image_count);
+    }
+
     is_uploading = false;
+    upload_filename = "";
+    upload_slot = -1;
+  }
+}
+
+// --- 웹서버 API 핸들러 ---
+void handle_list_images() {
+  String json = "{";
+  json += "\"current\":" + String(current_image_index) + ",";
+  json += "\"images\":[";
+  bool first = true;
+  for (int i = 0; i < MAX_IMAGES; i++) {
+    if (image_slots_used[i]) {
+      if (!first) json += ",";
+      first = false;
+      json += "{";
+      json += "\"index\":" + String(i) + ",";
+      json += "\"name\":\"" + String(image_names[i]) + "\"";
+      json += "}";
+    }
+  }
+  json += "]}";
+  server.send(200, "application/json", json);
+}
+
+void handle_select_image() {
+  if (!server.hasArg("index")) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"index required\"}");
+    return;
+  }
+
+  int idx = server.arg("index").toInt();
+  if (idx < 0 || idx >= MAX_IMAGES || !image_slots_used[idx]) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"invalid index\"}");
+    return;
+  }
+
+  current_image_index = idx;
+  save_image_info();
+  load_image_to_sram(idx);
+
+  String resp = "{\"status\":\"ok\",\"current\":";
+  resp += idx;
+  resp += "}";
+  server.send(200, "application/json", resp);
+  Serial.printf("[Web] 이미지 %d 선택됨 (%s)\n", idx, image_names[idx]);
+}
+
+void handle_delete_image() {
+  if (!server.hasArg("index")) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"index required\"}");
+    return;
+  }
+
+  int idx = server.arg("index").toInt();
+  if (idx < 0 || idx >= MAX_IMAGES || !image_slots_used[idx]) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"invalid index\"}");
+    return;
+  }
+
+  bool was_current = (idx == current_image_index);
+  delete_image(idx);
+
+  // 현재 이미지가 삭제된 경우 다른 이미지로 전환
+  if (was_current) {
+    if (image_count > 0) {
+      // 다음 사용 중인 슬롯 찾기 (idx+1 부터 순환)
+      int next = -1;
+      for (int i = 1; i <= MAX_IMAGES; i++) {
+        int candidate = (idx + i) % MAX_IMAGES;
+        if (image_slots_used[candidate]) {
+          next = candidate;
+          break;
+        }
+      }
+      if (next >= 0) {
+        current_image_index = next;
+        load_image_to_sram(next);
+        save_image_info();
+      }
+    } else {
+      // 저장된 이미지가 없으면 버퍼 비우기
+      current_image_index = 0;
+      if (img_buffer != nullptr) {
+        free(img_buffer);
+        img_buffer = nullptr;
+        img_width = 0;
+      }
+      clear_apa102_fast();
+    }
+  }
+
+  server.send(200, "application/json", "{\"status\":\"ok\"}");
+  Serial.printf("[Web] 이미지 %d 삭제됨\n", idx);
+}
+
+// --- 썸네일 데이터 API ---
+void handle_image_data() {
+  if (!server.hasArg("index")) {
+    server.send(400, "text/plain", "index required");
+    return;
+  }
+  int idx = server.arg("index").toInt();
+  if (idx < 0 || idx >= MAX_IMAGES || !image_slots_used[idx]) {
+    server.send(400, "text/plain", "invalid index");
+    return;
+  }
+
+  String path = get_image_path(idx);
+  File file = LittleFS.open(path, "r");
+  if (!file) {
+    server.send(404, "text/plain", "not found");
+    return;
+  }
+
+  uint32_t fileSize = file.size();
+  uint8_t* buf = (uint8_t*)malloc(fileSize);
+  if (!buf) {
+    file.close();
+    server.send(500, "text/plain", "memory error");
+    return;
+  }
+  file.read(buf, fileSize);
+  file.close();
+
+  server.setContentLength(fileSize);
+  server.send(200, "application/octet-stream", "");
+  server.sendContent((const char*)buf, fileSize);
+  server.client().flush();
+  free(buf);
+}
+
+// --- 버튼 처리 함수 ---
+void indicate_image_index() {
+  // 모든 LED 버퍼를 먼저清零 (이전 이미지 데이터 제거)
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i].r = 0;
+    leds[i].g = 0;
+    leds[i].b = 0;
+  }
+
+  // 하단 LED부터 (current_image_index + 1)개 점등
+  int num_leds_on = current_image_index + 1;
+  for (int i = 0; i < num_leds_on && i < NUM_LEDS; i++) {
+    leds[i].r = 255;
+    leds[i].g = 255;
+    leds[i].b = 255;
+  }
+  show_apa102_fast();
+  delay(500);
+  clear_apa102_fast();
+}
+
+void cycle_to_next_image() {
+  if (image_count == 0) {
+    Serial.println("[Button] 저장된 이미지가 없습니다.");
+    return;
+  }
+  if (image_count == 1) {
+    Serial.println("[Button] 이미지가 1개뿐이라 순환하지 않습니다.");
+    return;
+  }
+
+  // 현재 인덱스 이후로 순환하며 다음 사용 중인 슬롯 검색
+  int next = -1;
+  for (int i = 1; i <= MAX_IMAGES; i++) {
+    int candidate = (current_image_index + i) % MAX_IMAGES;
+    if (image_slots_used[candidate]) {
+      next = candidate;
+      break;
+    }
+  }
+
+  if (next >= 0) {
+    current_image_index = next;
+    save_image_info();
+    load_image_to_sram(next);
+    indicate_image_index();
+    Serial.printf("[Button] 이미지 %d (%s) 로 전환\n", next, image_names[next]);
   }
 }
 
@@ -158,8 +514,12 @@ void setup() {
     Serial.println("LittleFS Mounted.");
   }
 
-  // 저장되어 있는 기존 이미지 로드
-  load_image_to_sram();
+  // 다중 이미지 저장소 초기화
+  ensure_img_dir();
+  load_image_info();
+
+  // 저장되어 있는 현재 이미지 로드
+  load_image_to_sram(current_image_index);
 
   // Wi-Fi AP 설정
   WiFi.softAP(ap_ssid);
@@ -174,11 +534,19 @@ void setup() {
   // 바이너리 데이터 직접 스트리밍 업로드를 위한 핸들러
   server.on(
     "/upload", HTTP_POST, []() {
-      // 업로드가 안전하게 끝난 후에 SRAM으로 이미지를 로딩하고 응답을 보냅니다.
-      load_image_to_sram();
+      // 업로드 완료 후 SRAM으로 이미지 로딩
+      load_image_to_sram(current_image_index);
       server.send(200, "text/plain", "SUCCESS");
     },
     handle_image_upload);
+  // 이미지 목록 API
+  server.on("/list", HTTP_GET, handle_list_images);
+  // 이미지 선택 API
+  server.on("/select", HTTP_POST, handle_select_image);
+  // 이미지 삭제 API
+  server.on("/delete", HTTP_POST, handle_delete_image);
+  // 썸네일 이미지 데이터 API
+  server.on("/data", HTTP_GET, handle_image_data);
 
   server.begin();
   Serial.println("Web Server Started.");
@@ -310,6 +678,29 @@ void loop() {
   if (is_uploading) {
     delay(10);
     return;
+  }
+
+  // --- 버튼 디바운스 처리 ---
+  {
+    bool reading = digitalRead(SW_PIN);
+    if (reading != last_button_reading) {
+      last_button_debounce_time = millis();  // 상태 변화 감지 → 타이머 리셋
+    }
+    if ((millis() - last_button_debounce_time) > DEBOUNCE_DELAY) {
+      // DEBOUNCE_DELAY 동안 안정된 상태만 인정
+      if (reading != button_state) {
+        button_state = reading;
+        if (button_state == LOW) {  // falling edge: 버튼 눌림
+          button_pressed = true;
+        }
+      }
+    }
+    last_button_reading = reading;  // 이전 읽기값 갱신 (엣지 감지용)
+  }
+
+  if (button_pressed) {
+    button_pressed = false;
+    cycle_to_next_image();
   }
 
   // MPU6050의 하드웨어 데이터 준비 완료 인터럽트가 트리거되었을 때만 처리

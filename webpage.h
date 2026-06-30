@@ -215,6 +215,172 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .success { color: #2ecc71; }
         .error { color: #e74c3c; }
         .loading { color: var(--accent-color); }
+
+        /* --- 이미지 이름 입력 (모바일 대응) --- */
+        .name-input-group {
+            display: none;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .name-input-group label {
+            font-size: 0.85rem;
+            color: var(--accent-color);
+            font-weight: 500;
+        }
+        .name-input-group input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 0.7rem 1rem;
+            color: var(--title-color);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        .name-input-group input:focus {
+            border-color: var(--accent-color);
+        }
+
+        /* --- 저장된 이미지 목록 --- */
+        .image-list-section {
+            display: none;
+            flex-direction: column;
+            gap: 0.8rem;
+            animation: fadeIn 0.5s ease;
+        }
+        .image-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .image-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+            padding: 0.6rem 1rem;
+            transition: all 0.2s ease;
+        }
+        .image-item.current {
+            border-color: var(--accent-color);
+            background: rgba(102, 252, 241, 0.08);
+        }
+        .image-item .thumb {
+            width: 72px;
+            height: 72px;
+            border-radius: 4px;
+            background: #000;
+            flex-shrink: 0;
+            margin-right: 0.8rem;
+            image-rendering: pixelated;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .image-item .info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+        .image-item .name {
+            font-weight: 500;
+            color: var(--title-color);
+            font-size: 0.9rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .image-item .dims {
+            font-size: 0.7rem;
+            color: #858994;
+        }
+        .image-item .badge {
+            font-size: 0.7rem;
+            background: var(--accent-color);
+            color: var(--bg-color);
+            border-radius: 6px;
+            padding: 0.15rem 0.5rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+        .image-item .actions {
+            display: flex;
+            gap: 0.4rem;
+            flex-shrink: 0;
+        }
+        .image-item .actions button {
+            border: none;
+            border-radius: 6px;
+            padding: 0.3rem 0.7rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-select {
+            background: var(--accent-color);
+            color: var(--bg-color);
+        }
+        .btn-select:hover {
+            background: var(--accent-hover);
+        }
+        .btn-delete {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+        }
+        .btn-delete:hover {
+            background: rgba(231, 76, 60, 0.4);
+        }
+        .btn-select:disabled {
+            background: #2c3540;
+            color: #606f7b;
+            cursor: not-allowed;
+        }
+        .no-images {
+            color: #858994;
+            text-align: center;
+            padding: 1.5rem;
+            font-size: 0.9rem;
+        }
+
+        /* --- 현재 디스플레이 정보 --- */
+        .current-info {
+            display: none;
+            flex-direction: column;
+            gap: 0.5rem;
+            animation: fadeIn 0.5s ease;
+        }
+        .current-display {
+            background: rgba(102, 252, 241, 0.1);
+            border: 1px solid var(--accent-color);
+            border-radius: 10px;
+            padding: 0.8rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .current-display .label {
+            font-size: 0.8rem;
+            color: #858994;
+            font-weight: 500;
+        }
+        .current-display #current-name {
+            font-weight: 700;
+            color: var(--accent-color);
+            font-size: 1rem;
+            flex: 1;
+        }
+        .current-display .current-badge {
+            font-size: 0.7rem;
+            background: var(--accent-color);
+            color: var(--bg-color);
+            border-radius: 6px;
+            padding: 0.2rem 0.6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
     </style>
 </head>
 <body>
@@ -246,6 +412,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <span id="info-memory">-</span>
                 </div>
             </div>
+            <div class="name-input-group" id="name-input-group">
+                <label>저장할 이름 <span style="color:#858994;font-weight:400;">(수정 가능)</span></label>
+                <input type="text" id="image-name" placeholder="파일명을 입력하세요" maxlength="24">
+            </div>
             <button class="btn" id="upload-btn">POV 스틱에 전송하기</button>
         </div>
 
@@ -253,6 +423,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <div class="progress-bar" id="progress-bar"></div>
         </div>
         <div id="status-message"></div>
+
+        <div class="image-list-section" id="image-list-section">
+            <div class="preview-title">저장된 이미지</div>
+            <div class="image-list" id="image-list">
+                <!-- JS로 동적 생성 -->
+            </div>
+            <div class="no-images" id="no-images" style="display:none;">
+                저장된 이미지가 없습니다. 이미지를 업로드해주세요.
+            </div>
+        </div>
+
+        <!-- 현재 디스플레이 정보 -->
+        <div class="current-info" id="current-info" style="display:none;">
+            <div class="preview-title">현재 디스플레이</div>
+            <div id="current-display" class="current-display">
+                <span id="current-name">-</span>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -270,6 +458,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         let rawBuffer = null;
         let imgWidth = 0;
         let imgHeight = 72; // Target POV height
+        let originalFileName = '';
 
         // 드래그 앤 드롭 이벤트
         ['dragenter', 'dragover'].forEach(eventName => {
@@ -308,6 +497,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             if (!file.type.startsWith('image/')) {
                 showStatus('이미지 파일만 지원합니다.', 'error');
                 return;
+            }
+
+            // 원본 파일명 저장
+            originalFileName = file.name;
+            if (originalFileName.length > 24) {
+                originalFileName = originalFileName.substring(0, 24);
             }
 
             showStatus('이미지 처리 중...', 'loading');
@@ -443,6 +638,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             infoMemory.textContent = `${Math.round(rawBuffer.length / 1024 * 10) / 10} KB`;
             
             previewSection.style.display = 'flex';
+            // 파일명 입력 필드 표시 + 자동 채우기
+            const nameInput = document.getElementById('image-name');
+            const nameGroup = document.getElementById('name-input-group');
+            nameInput.value = originalFileName;
+            nameGroup.style.display = 'flex';
             showStatus('이미지 분석 완료. POV 스틱에 전송할 준비가 되었습니다.', 'success');
         }
 
@@ -459,13 +659,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             progressBar.style.width = '0%';
             showStatus('POV 스틱에 전송 중...', 'loading');
 
-            // Raw binary를 Blob으로 감싸고 FormData를 통해 전송 (multipart/form-data 호환성 확보)
-            const blob = new Blob([rawBuffer], { type: 'application/octet-stream' });
+            // 입력 필드에서 최종 파일명 가져오기 (모바일에서 숫자 파일명 수정 가능)
+            let finalName = document.getElementById('image-name').value.trim();
+            if (!finalName) finalName = originalFileName;
+
+            const file = new File([rawBuffer], finalName, { type: 'application/octet-stream' });
             const formData = new FormData();
-            formData.append('file', blob, 'image.raw');
+            formData.append('file', file);
 
             const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/upload', true);
+            xhr.open('POST', '/upload?name=' + encodeURIComponent(finalName), true);
 
             xhr.upload.onprogress = function(e) {
                 if (e.lengthComputable) {
@@ -478,6 +681,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 uploadBtn.disabled = false;
                 if (xhr.status === 200) {
                     showStatus('업로드 완료! POV 스틱에 이미지가 반영되었습니다.', 'success');
+                    fetchImageList();  // 목록 새로고침
                 } else {
                     showStatus('업로드 실패: ' + xhr.statusText, 'error');
                 }
@@ -490,6 +694,180 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
             xhr.send(formData);
         });
+
+        // --- 이미지 목록 API 함수 ---
+        function fetchImageList() {
+            fetch('/list')
+                .then(response => response.json())
+                .then(data => { renderImageList(data); })
+                .catch(err => { console.error('이미지 목록 불러오기 실패:', err); });
+        }
+
+        function renderImageList(data) {
+            const listEl = document.getElementById('image-list');
+            const noImagesEl = document.getElementById('no-images');
+            const sectionEl = document.getElementById('image-list-section');
+            const currentInfoEl = document.getElementById('current-info');
+            const currentNameEl = document.getElementById('current-name');
+            sectionEl.style.display = 'flex';
+
+            if (!data.images || data.images.length === 0) {
+                listEl.innerHTML = '';
+                noImagesEl.style.display = 'block';
+                currentInfoEl.style.display = 'none';
+                return;
+            }
+
+            noImagesEl.style.display = 'none';
+            listEl.innerHTML = '';
+
+            // 현재 이미지 정보 표시
+            const currentImg = data.images.find(img => img.index === data.current);
+            if (currentImg) {
+                currentNameEl.textContent = currentImg.name + ' (' + (data.current + 1) + '/' + data.images.length + ')';
+                currentInfoEl.style.display = 'flex';
+            } else {
+                currentInfoEl.style.display = 'none';
+            }
+
+            data.images.forEach(img => {
+                const item = document.createElement('div');
+                item.className = 'image-item';
+                if (img.index === data.current) item.classList.add('current');
+
+                // 썸네일 캔버스
+                const thumbCanvas = document.createElement('canvas');
+                thumbCanvas.className = 'thumb';
+                thumbCanvas.width = 72;
+                thumbCanvas.height = 72;
+
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'info';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'name';
+                nameSpan.textContent = img.name;
+
+                const dimsSpan = document.createElement('span');
+                dimsSpan.className = 'dims';
+                dimsSpan.textContent = '로딩 중...';
+
+                infoDiv.appendChild(nameSpan);
+                infoDiv.appendChild(dimsSpan);
+
+                const actions = document.createElement('div');
+                actions.className = 'actions';
+
+                const selectBtn = document.createElement('button');
+                selectBtn.className = 'btn-select';
+                selectBtn.textContent = '선택';
+                selectBtn.disabled = (img.index === data.current);
+                selectBtn.addEventListener('click', () => selectImage(img.index));
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn-delete';
+                deleteBtn.textContent = '삭제';
+                deleteBtn.addEventListener('click', () => deleteImage(img.index));
+
+                actions.appendChild(selectBtn);
+                actions.appendChild(deleteBtn);
+                item.appendChild(thumbCanvas);
+                item.appendChild(infoDiv);
+                item.appendChild(actions);
+                listEl.appendChild(item);
+
+                // 썸네일 비동기 로드
+                loadThumbnail(img.index, thumbCanvas, dimsSpan);
+            });
+        }
+
+        function loadThumbnail(index, canvas, dimsSpan) {
+            fetch('/data?index=' + index)
+                .then(response => {
+                    if (!response.ok) throw new Error('fail');
+                    return response.arrayBuffer();
+                })
+                .then(buffer => {
+                    const bytes = new Uint8Array(buffer);
+                    if (bytes.length < 3) return;
+                    // 헤더: 2바이트 가로 폭 (Big Endian)
+                    const w = (bytes[0] << 8) | bytes[1];
+                    const h = 72;
+                    const dataLen = w * h * 3;
+                    if (bytes.length < dataLen + 2) return;
+
+                    dimsSpan.textContent = w + ' x ' + h + ' px';
+
+                    // 캔버스 크기: 비율 유지하며 72px 높이에 맞춤
+                    const thumbH = 72;
+                    const thumbW = Math.max(1, Math.round(w * thumbH / h));
+                    canvas.width = thumbW;
+                    canvas.height = thumbH;
+
+                    const ctx = canvas.getContext('2d');
+                    const imgData = ctx.createImageData(thumbW, thumbH);
+
+                    // 이미지 데이터를 썸네일 크기로 샘플링 (Y축 반전: LED0=하단)
+                    for (let ty = 0; ty < thumbH; ty++) {
+                        const srcY = h - 1 - Math.floor(ty * h / thumbH);
+                        for (let tx = 0; tx < thumbW; tx++) {
+                            const srcX = Math.floor(tx * w / thumbW);
+                            const srcIdx = 2 + (srcX * h + srcY) * 3;
+                            const dstIdx = (ty * thumbW + tx) * 4;
+                            imgData.data[dstIdx] = bytes[srcIdx];       // R
+                            imgData.data[dstIdx + 1] = bytes[srcIdx + 1]; // G
+                            imgData.data[dstIdx + 2] = bytes[srcIdx + 2]; // B
+                            imgData.data[dstIdx + 3] = 255;               // A
+                        }
+                    }
+                    ctx.putImageData(imgData, 0, 0);
+                })
+                .catch(() => {
+                    dimsSpan.textContent = '불러오기 실패';
+                });
+        }
+
+        function selectImage(index) {
+            showStatus('이미지 ' + (index + 1) + '번 선택 중...', 'loading');
+            fetch('/select', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'index=' + index
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    showStatus('이미지 ' + (index + 1) + '번이 선택되었습니다.', 'success');
+                    fetchImageList();
+                } else {
+                    showStatus('선택 실패: ' + (data.message || ''), 'error');
+                }
+            })
+            .catch(() => showStatus('네트워크 에러', 'error'));
+        }
+
+        function deleteImage(index) {
+            if (!confirm('이미지 ' + (index + 1) + '번을 삭제하시겠습니까?')) return;
+            showStatus('이미지 삭제 중...', 'loading');
+            fetch('/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'index=' + index
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    showStatus('이미지가 삭제되었습니다.', 'success');
+                    fetchImageList();
+                } else {
+                    showStatus('삭제 실패: ' + (data.message || ''), 'error');
+                }
+            })
+            .catch(() => showStatus('네트워크 에러', 'error'));
+        }
+
+        // 페이지 로드 시 이미지 목록 불러오기
+        window.addEventListener('load', fetchImageList);
     </script>
 </body>
 </html>
