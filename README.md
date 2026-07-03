@@ -13,7 +13,8 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 - **Wi-Fi image upload** — browser-based drag-and-drop upload directly to the device (AP mode)
 - **HSV color processing** — saturation boost (+50 %) and brightness reduction (-30 %) on the browser side for better POV appearance
 - **Custom APA102 driver** — 20 MHz hardware SPI for fast LED data transfer (no FastLED library needed)
-- **Multi‑image storage** — up to 10 images stored on LittleFS, switchable via button or web UI
+- **Multi‑image storage** — up to 20 images stored on LittleFS, switchable via button or web UI
+- **Text mode** — type text directly in web UI and display on the POV stick (multi‑line, 10 fonts, custom font file loading)
 - **Button image cycling** — GPIO9 push button cycles through saved images; LED bar indicates current index
 - **Web image management** — browse saved images with pixel‑accurate thumbnails, select or delete directly
 - **Image name editing** — rename before upload; works with Mac, Windows, iOS, and Android browsers
@@ -80,7 +81,7 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 | `ONBOARD_LED_PIN` | 8 | Status LED pin |
 | `SW_PIN` | 9 | Button pin (image cycle) |
 | `INTERRUPT_PIN` | 0 | MPU6050 interrupt pin |
-| `MAX_IMAGES` | 10 | Number of image slots |
+| `MAX_IMAGES` | 20 | Number of image slots |
 | `MAX_IMG_NAME_LEN` | 24 | Max file name length (bytes) |
 | `ap_ssid` | `"POV_Stick_AP"` | Wi‑Fi AP SSID |
 | SPI frequency | 20 MHz | APA102 LED data rate |
@@ -168,7 +169,7 @@ LED_POV_APA102/
 ├── 0.raw                 # Image data (2‑byte header + RGB pixels)
 ├── 1.raw
 ├── ...
-├── 9.raw
+├── 19.raw                # Up to 20 images (text or picture)
 └── info.txt              # Metadata (current index, file names)
 ```
 
@@ -196,14 +197,23 @@ count=3
 
 ## Browser-side Image Processing
 
+### Image mode
 When you upload an image via the web UI, JavaScript in the browser:
 
 1. Resizes the image to **72 px tall** (width scales proportionally, capped at 300 px).
-2. Converts RGB → HSV, adjusts saturation (×1.5) and value/brightness (×0.7), then converts back to RGB. This compensates for color washout typical in fast‑scrolling POV displays.
+2. Converts RGB → HSV, adjusts saturation (×1.7) and value/brightness (×0.3), then converts back to RGB. This compensates for color washout typical in fast‑scrolling POV displays.
 3. Flips the image vertically (LED index 0 = bottom of the stick).
 4. Sends the raw binary data as a `multipart/form‑data` POST to `/upload?name=...`.
 
-The name input field is automatically filled from the original file name and can be edited before upload (useful when mobile browsers assign temporary names like `1000014272.png`).
+### Text mode
+1. Type text in the text mode panel — live preview updates on the 72 px canvas.
+2. Choose from 10 system fonts, or load a custom font file (.ttf, .otf, .woff, .woff2) via the 📁 button.
+3. Adjust font size (16–72 px) and color via slider and color picker.
+4. Pixel‑scan detects the actual text bounds and crops it exactly to the top of the display.
+5. Text is sent with **raw colors** (no HSV filter) — what you pick is what you see on the LEDs.
+6. Upload uses the same pipeline as image mode.
+
+The name input field is automatically filled from the original file name (image mode) or text content (text mode) and can be edited before upload.
 
 ---
 

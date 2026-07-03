@@ -1,5 +1,29 @@
 # Release Notes
 
+## v2.3 (2026-07-03)
+
+### ✨ New Features
+
+- **Text mode** — type text directly in the web UI and display on the POV stick without needing an image file
+  - Text input with live canvas preview
+  - 10-system-font dropdown + custom font file loader (.ttf, .otf, .woff, .woff2)
+  - Font size slider (16–72 px), color picker
+  - Multi-line text support (Enter for new line)
+  - Auto-crop: pixel-scan detects actual text bounds, aligns text exactly to top of display
+  - Character counter: Korean/CJK = 2 slots, ASCII = 1 slot, max 40 slots (Korean 20 / English 40)
+- **Custom font loading** — load .ttf/.otf/.woff/.woff2 font files from your computer via FontFace API
+- **Text mode raw color output** — text renders with exact selected color (no HSV saturation/brightness filter; image mode filter unchanged)
+- **Increased storage** — `MAX_IMAGES` raised from 10 → 20 slots
+- **Mode tabs** — image/text mode switcher in web UI
+
+### 🔧 Improvements
+
+- **Font dropdown** — replaced single-line input with proper `<select>` dropdown (10 system fonts)
+- **Text mode preview** — 150 ms debounced rendering for smooth typing experience
+- **Upload validation** — text mode blocks upload if empty or over character limit
+
+---
+
 ## v2.2 (2026-06-30)
 
 ### ✨ New Features

@@ -31,7 +31,7 @@ WebServer server(80);
 
 
 // --- 다중 이미지 설정 ---
-#define MAX_IMAGES 10
+#define MAX_IMAGES 20
 #define IMG_DIR "/img"
 #define IMG_INFO_FILE "/img/info.txt"
 #define MAX_IMG_NAME_LEN 24

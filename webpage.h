@@ -380,6 +380,142 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             font-weight: 700;
             text-transform: uppercase;
         }
+
+        /* --- 모드 전환 탭 --- */
+        .mode-tabs {
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            padding: 0.3rem;
+        }
+        .mode-tab {
+            flex: 1;
+            background: transparent;
+            color: #858994;
+            border: none;
+            border-radius: 10px;
+            padding: 0.65rem 1rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+        .mode-tab:hover {
+            color: var(--title-color);
+        }
+        .mode-tab.active {
+            background: var(--accent-color);
+            color: var(--bg-color);
+            box-shadow: 0 2px 8px rgba(102, 252, 241, 0.3);
+        }
+
+        /* --- 텍스트 모드 패널 --- */
+        .text-mode-panel {
+            display: none;
+            flex-direction: column;
+            gap: 1.2rem;
+            animation: fadeIn 0.4s ease;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+        .control-group label {
+            font-size: 0.85rem;
+            color: var(--accent-color);
+            font-weight: 500;
+        }
+        .control-group textarea,
+        .control-group select {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 0.7rem 1rem;
+            color: var(--title-color);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.3s;
+            font-family: inherit;
+            resize: none;
+        }
+        .control-group textarea:focus,
+        .control-group select:focus {
+            border-color: var(--accent-color);
+        }
+        .control-group select option {
+            background: var(--card-bg);
+            color: var(--text-color);
+        }
+        .control-group input[type="color"] {
+            width: 100%;
+            height: 42px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            padding: 3px;
+        }
+        .control-group input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.15);
+            outline: none;
+        }
+        .control-group input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(102, 252, 241, 0.4);
+        }
+        .control-row {
+            display: flex;
+            gap: 1rem;
+        }
+        .control-half {
+            flex: 1;
+        }
+        .char-counter {
+            font-size: 0.8rem;
+            color: #858994;
+            text-align: right;
+        }
+        .char-counter.warn {
+            color: #f39c12;
+        }
+        .char-counter.over {
+            color: #e74c3c;
+            font-weight: 600;
+        }
+
+        .font-input-row {
+            display: flex;
+            gap: 0.4rem;
+        }
+        .font-input-row input {
+            flex: 1;
+        }
+        .btn-load-font {
+            background: rgba(102, 252, 241, 0.15);
+            border: 1px solid rgba(102, 252, 241, 0.3);
+            border-radius: 10px;
+            color: var(--accent-color);
+            font-size: 1.1rem;
+            padding: 0 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        .btn-load-font:hover {
+            background: rgba(102, 252, 241, 0.25);
+            border-color: var(--accent-color);
+        }
     </style>
 </head>
 <body>
@@ -389,11 +525,55 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <p class="subtitle">POV 스틱용 이미지를 업로드하고 리사이징합니다.</p>
         </header>
 
+        <div class="mode-tabs" id="mode-tabs">
+            <button class="mode-tab active" id="tab-image">이미지</button>
+            <button class="mode-tab" id="tab-text">텍스트</button>
+        </div>
+
         <div class="drop-zone" id="drop-zone">
             <div class="drop-zone-icon">📁</div>
             <div class="drop-zone-text">이미지를 드래그하여 놓거나 클릭하여 선택하세요</div>
             <p class="subtitle" style="margin-top: 0.5rem;">세로 72픽셀로 자동 변환됩니다.</p>
             <input type="file" id="file-input" accept="image/*">
+        </div>
+
+        <div class="text-mode-panel" id="text-mode-panel">
+            <div class="control-group">
+                <label for="text-input">텍스트 입력</label>
+                <textarea id="text-input" maxlength="200" rows="3"
+                    placeholder="표시할 텍스트를 입력하세요 (한글 최대 20자, 영문 최대 40자, 여러 줄 가능)"></textarea>
+                <span id="char-count" class="char-counter">0 / 40</span>
+            </div>
+            <div class="control-row">
+                <div class="control-group control-half">
+                    <label for="font-select">글꼴</label>
+                    <div class="font-input-row">
+                        <select id="font-select">
+                            <option value="sans-serif">Sans-serif (고딕)</option>
+                            <option value="serif">Serif (명조)</option>
+                            <option value="monospace">Monospace (고정폭)</option>
+                            <option value="Arial">Arial</option>
+                            <option value="Helvetica">Helvetica</option>
+                            <option value="Verdana">Verdana</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Impact">Impact</option>
+                        </select>
+                        <button type="button" class="btn-load-font" id="btn-load-font" title="폰트 파일 불러오기">📁</button>
+                    </div>
+                    <input type="file" id="font-file-input" accept=".ttf,.otf,.woff,.woff2" style="display:none;">
+                    <input type="hidden" id="custom-font-name" value="">
+                </div>
+                <div class="control-group control-half">
+                    <label for="text-color">글자 색상</label>
+                    <input type="color" id="text-color" value="#ffffff">
+                </div>
+            </div>
+            <div class="control-group">
+                <label for="text-size">글자 크기: <span id="size-value">48</span>px</label>
+                <input type="range" id="text-size" min="16" max="72" value="48" step="1">
+            </div>
         </div>
 
         <div class="preview-section" id="preview-section">
@@ -454,10 +634,29 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const progressBar = document.getElementById('progress-bar');
         const statusMessage = document.getElementById('status-message');
 
+        // 텍스트 모드 DOM 참조
+        const modeTabs = document.getElementById('mode-tabs');
+        const tabImage = document.getElementById('tab-image');
+        const tabText = document.getElementById('tab-text');
+        const textModePanel = document.getElementById('text-mode-panel');
+        const textInput = document.getElementById('text-input');
+        const charCount = document.getElementById('char-count');
+        const fontSelect = document.getElementById('font-select');
+        const textColorInput = document.getElementById('text-color');
+        const textSizeSlider = document.getElementById('text-size');
+        const sizeValueSpan = document.getElementById('size-value');
+        const fontFileInput = document.getElementById('font-file-input');
+        const btnLoadFont = document.getElementById('btn-load-font');
+        const customFontName = document.getElementById('custom-font-name');
+
         let rawBuffer = null;
         let imgWidth = 0;
         let imgHeight = 72; // Target POV height
         let originalFileName = '';
+
+        // 텍스트 모드 상태
+        let currentMode = 'image';
+        let textRenderDebounce = null;
 
         // 드래그 앤 드롭 이벤트
         ['dragenter', 'dragover'].forEach(eventName => {
@@ -490,6 +689,69 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             if (e.target.files.length > 0) {
                 handleFile(e.target.files[0]);
             }
+        });
+
+        // --- 텍스트 모드 이벤트 리스너 ---
+        tabImage.addEventListener('click', () => switchMode('image'));
+        tabText.addEventListener('click', () => switchMode('text'));
+
+        textInput.addEventListener('input', updateCharCounter);
+
+        fontSelect.addEventListener('change', () => {
+            customFontName.value = '';  // 드롭다운 선택 시 커스텀 폰트 초기화
+            if (textInput.value.trim()) {
+                if (textRenderDebounce) clearTimeout(textRenderDebounce);
+                textRenderDebounce = setTimeout(renderTextToCanvas, 150);
+            }
+        });
+
+        textColorInput.addEventListener('input', () => {
+            if (textInput.value.trim()) {
+                if (textRenderDebounce) clearTimeout(textRenderDebounce);
+                textRenderDebounce = setTimeout(renderTextToCanvas, 100);
+            }
+        });
+
+        textSizeSlider.addEventListener('input', () => {
+            sizeValueSpan.textContent = textSizeSlider.value;
+            if (textInput.value.trim()) {
+                if (textRenderDebounce) clearTimeout(textRenderDebounce);
+                textRenderDebounce = setTimeout(renderTextToCanvas, 150);
+            }
+        });
+
+        // --- 폰트 파일 불러오기 ---
+        btnLoadFont.addEventListener('click', () => fontFileInput.click());
+
+        fontFileInput.addEventListener('change', () => {
+            const file = fontFileInput.files[0];
+            if (!file) return;
+
+            const fontName = file.name.replace(/\.[^.]+$/, ''); // 확장자 제거
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const fontData = e.target.result;
+                const mimeMap = {
+                    'ttf': 'font/ttf', 'otf': 'font/otf',
+                    'woff': 'font/woff', 'woff2': 'font/woff2'
+                };
+                const ext = file.name.split('.').pop().toLowerCase();
+                const format = mimeMap[ext] || 'font/ttf';
+
+                const fontFace = new FontFace(fontName, fontData, { style: 'normal', weight: 'bold' });
+                fontFace.load().then(function(loadedFont) {
+                    document.fonts.add(loadedFont);
+                    customFontName.value = fontName;
+                    showStatus("'" + fontName + "' 폰트 로드 완료", 'success');
+                    if (textInput.value.trim()) {
+                        if (textRenderDebounce) clearTimeout(textRenderDebounce);
+                        textRenderDebounce = setTimeout(renderTextToCanvas, 200);
+                    }
+                }).catch(function(err) {
+                    showStatus('폰트 로드 실패: ' + err.message, 'error');
+                });
+            };
+            reader.readAsArrayBuffer(file);
         });
 
         function handleFile(file) {
@@ -606,8 +868,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     let hsv = rgbToHsv(r, g, b);
 
                     // 2. 채도 증폭 & 밝기 감소 필터 적용
-                    const SATURATION_SCALE = 1.5; // 채도 증가 배율 (1.0이 원본, 숫자가 클수록 진해짐)
-                    const BRIGHTNESS_SCALE = 0.7; // 밝기 감소 배율 (1.0이 원본, 0.5는 밝기를 절반으로 줄임)
+                    const SATURATION_SCALE = 1.7; // 채도 증가 배율 (1.0이 원본, 숫자가 클수록 진해짐)
+                    const BRIGHTNESS_SCALE = 0.3; // 밝기 감소 배율 (1.0이 원본, 0.5는 밝기를 절반으로 줄임)
 
                     hsv.s = Math.min(1.0, hsv.s * SATURATION_SCALE); // 채도를 높이되 최대치 1.0 제한
                     hsv.v = hsv.v * BRIGHTNESS_SCALE;               // 밝기 감소
@@ -639,8 +901,174 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             statusMessage.className = type || '';
         }
 
+        // --- 텍스트 모드 함수 ---
+        function countCharacters(str) {
+            let slots = 0;
+            for (let i = 0; i < str.length; i++) {
+                const code = str.charCodeAt(i);
+                // 한글 음절 (U+AC00-U+D7AF), 자모 (U+1100-U+11FF, U+3130-U+318F)
+                // CJK 통합 한자 (U+4E00-U+9FFF) — 모두 2칸 차지
+                if ((code >= 0xAC00 && code <= 0xD7AF) ||
+                    (code >= 0x1100 && code <= 0x11FF) ||
+                    (code >= 0x3130 && code <= 0x318F) ||
+                    (code >= 0x4E00 && code <= 0x9FFF)) {
+                    slots += 2;
+                } else {
+                    slots += 1;  // ASCII, 숫자, 공백, 구두점
+                }
+            }
+            return slots;
+        }
+
+        function updateCharCounter() {
+            const slots = countCharacters(textInput.value);
+            charCount.textContent = slots + ' / 40';
+            charCount.classList.remove('warn', 'over');
+            if (slots > 40) charCount.classList.add('over');
+            else if (slots >= 32) charCount.classList.add('warn');
+            // 디바운스된 미리보기 갱신
+            if (textRenderDebounce) clearTimeout(textRenderDebounce);
+            textRenderDebounce = setTimeout(renderTextToCanvas, 150);
+        }
+
+        function renderTextToCanvas() {
+            const text = textInput.value.trim();
+            if (!text) {
+                rawBuffer = null;
+                previewSection.style.display = 'none';
+                return;
+            }
+
+            const fontSize = parseInt(textSizeSlider.value);
+            let fontFamily = customFontName.value || fontSelect.value;
+            // 공백 포함된 폰트명은 따옴표로 감싸기
+            if (fontFamily.includes(' ') && !fontFamily.startsWith("'")) {
+                fontFamily = "'" + fontFamily + "'";
+            }
+            const textColor = textColorInput.value;
+
+            // 1. 여러 줄로 분할하고 너비 측정
+            const lines = text.split('\n');
+            const measureCanvas = document.createElement('canvas');
+            const mctx = measureCanvas.getContext('2d');
+            mctx.font = fontSize + 'px ' + fontFamily;
+            let maxWidth = 0;
+            for (let i = 0; i < lines.length; i++) {
+                const m = mctx.measureText(lines[i]);
+                if (m.width > maxWidth) maxWidth = m.width;
+            }
+            let w = Math.ceil(maxWidth) + 4;  // 좌우 2px 여백
+            w = Math.max(4, Math.min(300, w));
+
+            const lineHeight = Math.round(fontSize * 1.15);
+            const headroom = Math.round(fontSize * 0.3); // 상단 감지용 여유 공간
+            const textAreaH = headroom + lineHeight * lines.length;
+
+            // 2. 여유 공간 있는 임시 캔버스에 텍스트 렌더링
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w;
+            tempCanvas.height = textAreaH;
+            const tctx = tempCanvas.getContext('2d');
+            tctx.fillStyle = '#000000';
+            tctx.fillRect(0, 0, w, textAreaH);  // 검은 배경
+            tctx.font = fontSize + 'px ' + fontFamily;
+            tctx.fillStyle = textColor;
+            tctx.textBaseline = 'top';
+            tctx.textAlign = 'center';
+            for (let i = 0; i < lines.length; i++) {
+                tctx.fillText(lines[i], w / 2, headroom + i * lineHeight);
+            }
+
+            // 3. 픽셀 스캔: 실제 글자가 시작되는 첫 y좌표 찾기
+            const tempData = tctx.getImageData(0, 0, w, textAreaH).data;
+            let textTop = 0;
+            scanLoop:
+            for (let y = 0; y < textAreaH; y++) {
+                for (let x = 0; x < w; x++) {
+                    const pi = (y * w + x) * 4;
+                    if (tempData[pi] > 0 || tempData[pi + 1] > 0 || tempData[pi + 2] > 0) {
+                        textTop = y;
+                        break scanLoop;
+                    }
+                }
+            }
+
+            // 4. 72px 최종 캔버스에 크롭해서 그리기 (글자 상단이 y=0에 정확히 맞춰짐)
+            const finalCanvas = document.createElement('canvas');
+            finalCanvas.width = w;
+            finalCanvas.height = 72;
+            const fctx = finalCanvas.getContext('2d');
+            fctx.fillStyle = '#000000';
+            fctx.fillRect(0, 0, w, 72);
+            fctx.drawImage(tempCanvas, 0, textTop, w, 72, 0, 0, w, 72);
+
+            // 5. 픽셀 추출 → rawBuffer (텍스트 모드: 원본 색상 그대로)
+            const imgData = fctx.getImageData(0, 0, w, 72);
+            const data = imgData.data;
+            const bodySize = w * 72 * 3;
+            rawBuffer = new Uint8Array(2 + bodySize);
+            rawBuffer[0] = (w >> 8) & 0xFF;
+            rawBuffer[1] = w & 0xFF;
+
+            let idx = 2;
+            for (let x = 0; x < w; x++) {
+                for (let y = 71; y >= 0; y--) {  // 하단 LED부터 (bottom-first)
+                    const pi = (y * w + x) * 4;
+                    rawBuffer[idx++] = data[pi];       // R
+                    rawBuffer[idx++] = data[pi + 1];   // G
+                    rawBuffer[idx++] = data[pi + 2];   // B
+                }
+            }
+
+            // 6. 공유 미리보기 캔버스 업데이트
+            imgWidth = w;
+            imgHeight = 72;
+            previewCanvas.width = w;
+            previewCanvas.height = 72;
+            const pctx = previewCanvas.getContext('2d');
+            pctx.imageSmoothingEnabled = false;
+            pctx.drawImage(finalCanvas, 0, 0);
+
+            // 7. 정보 표시 및 파일명 자동 채우기
+            infoResolution.textContent = w + ' x 72 px';
+            infoMemory.textContent = Math.round(rawBuffer.length / 1024 * 10) / 10 + ' KB';
+            previewSection.style.display = 'flex';
+            const nameInput = document.getElementById('image-name');
+            const nameGroup = document.getElementById('name-input-group');
+            nameInput.value = text.replace(/[\\/:*?"<>|\n]/g, '_').substring(0, 18).trim() || 'text';
+            nameGroup.style.display = 'flex';
+        }
+
+        function switchMode(mode) {
+            if (currentMode === mode) return;
+            currentMode = mode;
+            tabImage.classList.toggle('active', mode === 'image');
+            tabText.classList.toggle('active', mode === 'text');
+            if (mode === 'image') {
+                dropZone.style.display = '';
+                textModePanel.style.display = 'none';
+            } else {
+                dropZone.style.display = 'none';
+                textModePanel.style.display = 'flex';
+                if (textInput.value.trim()) renderTextToCanvas();
+                else previewSection.style.display = 'none';
+            }
+        }
+
         uploadBtn.addEventListener('click', () => {
             if (!rawBuffer) return;
+
+            // 텍스트 모드: 업로드 전 유효성 검사
+            if (currentMode === 'text') {
+                if (!textInput.value.trim()) {
+                    showStatus('텍스트를 입력해주세요.', 'error');
+                    return;
+                }
+                if (countCharacters(textInput.value) > 40) {
+                    showStatus('글자 수가 제한을 초과했습니다. (최대 40칸)', 'error');
+                    return;
+                }
+            }
 
             uploadBtn.disabled = true;
             progressContainer.style.display = 'block';
