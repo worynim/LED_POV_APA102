@@ -64,6 +64,7 @@ int16_t prev_gz_val = 0;
 unsigned long last_zero_crossing_time = 0;
 unsigned long swing_duration = 200;  // 기본 스윙 시간 (ms)
 bool swing_direction = false;        // true: 좌->우, false: 우->좌
+#define SWING_THRESHOLD 400          // 스윙 방향 전환 감지 임계값
 
 // --- 이미지 업로드 임시 파일 포인터 및 상태 플래그 ---
 File* uploadFile = nullptr;
@@ -200,7 +201,7 @@ void load_image_to_sram(uint8_t index) {
 
   // 2. 새 RGB 데이터 영역 메모리 할당
   size_t data_size = new_width * NUM_LEDS * 3;
-  uint8_t* new_buffer = (uint8_t*)malloc(data_size);
+  uint8_t* new_buffer = (uint8_t*)calloc(1, data_size);
   if (new_buffer == nullptr) {
     Serial.println("[Memory] SRAM 메모리 할당 실패!");
     file.close();
@@ -320,7 +321,7 @@ void handle_image_upload() {
 // --- 웹서버 API 핸들러 ---
 void handle_list_images() {
   String json;
-  json.reserve(512);  // heap 단편화 방지
+  json.reserve(1024);  // heap 단편화 방지
   json = "{";
   json += "\"current\":" + String(current_image_index) + ",";
   json += "\"images\":[";
@@ -582,7 +583,7 @@ void clear_apa102_fast() {
   SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
   SPI.write32(0);  // 시작 프레임
   for (int i = 0; i < NUM_LEDS; i++) {
-    SPI.write32(0xFF000000);  // brightness=0 → LED OFF
+    SPI.write32(0xE0000000);  // brightness=0 → LED OFF
   }
   // 종료 프레임 (APA102 사양: LED당 1/2비트 이상의 1 필요)
   for (int i = 0; i < (NUM_LEDS + 15) / 16; i++) SPI.write(0xFF);
@@ -625,7 +626,7 @@ void display_pov() {
 
   // 여백 시간 대기
   if (start_delay > 0) {
-    delayMicroseconds(start_delay * 1000);
+    delay(start_delay);
   }
 
   // ═══ prev_gz_val을 현재 swing 방향으로 동기화 ═══
@@ -663,7 +664,7 @@ void display_pov() {
       int16_t ax, ay, az, gx, gy, gz;
       mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
       if ((prev_gz_val > 0 && gz < 0) || (prev_gz_val < 0 && gz > 0)) {
-        if (abs(prev_gz_val - gz) > 400) {
+        if (abs(prev_gz_val - gz) > SWING_THRESHOLD) {
           // 스윙 방향 전환 감지 → 렌더링 중단
           prev_gz_val = gz;
           last_zero_crossing_time = millis();
@@ -685,12 +686,6 @@ void display_pov() {
 
   // 렌더링 완료 후 LED 소등
   clear_apa102_fast();
-
-  // 실행 시간 디버그 로그 출력
-#if 0
-  unsigned long duration_ms = millis() - start_pov_ms;
-  Serial.printf("[POV] display_pov() 실제 실행 시간: %lu ms (목표 swing_duration: %lu ms)\n", duration_ms, swing_duration);
-#endif
 }
 
 
@@ -740,7 +735,7 @@ void loop() {
 
     // 영점교차 + 델타 ≥ 400 → 스윙 방향 전환 감지
     if ((prev_gz_val > 0 && gz_val < 0) || (prev_gz_val < 0 && gz_val > 0)) {
-      if (abs(prev_gz_val - gz_val) > 400) {
+      if (abs(prev_gz_val - gz_val) > SWING_THRESHOLD) {
         unsigned long duration = current_time - last_zero_crossing_time;
 
         // 판정 성공 여부와 상관없이 기준 시점을 즉시 갱신
