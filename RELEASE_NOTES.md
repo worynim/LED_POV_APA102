@@ -1,5 +1,23 @@
 # Release Notes
 
+## v2.4 (2026-07-05)
+
+### 🐛 Bug Fixes
+
+- **Mac NFD filename truncation** — increased `MAX_IMG_NAME_LEN` from 24 to 64 bytes to properly store NFD-encoded Korean filenames uploaded from Mac environments without truncation
+- **LittleFS corruption on power loss** — implemented atomic save (using `.tmp` file and `rename()`) for `info.txt` to prevent file corruption and subsequent full filesystem formatting if a brownout/reset occurs during a button press
+
+### 🔧 Improvements
+
+- **JSON buffer optimization** — increased `json.reserve()` from 512 to 1024 in `handle_list_images()` to prevent heap memory fragmentation
+- **Delay function optimization** — replaced `delayMicroseconds()` with `delay()` for padding delays in `display_pov()` to prevent Watchdog Timer (WDT) triggers
+- **SRAM initialization safety** — replaced `malloc()` with `calloc()` in `load_image_to_sram()` to ensure the image buffer is properly zero-initialized
+- **Magic number refactoring** — extracted hardcoded gyro swing threshold `400` to `#define SWING_THRESHOLD 400`
+- **APA102 clear frame correction** — changed the LED off command in `clear_apa102_fast()` from `0xFF000000` to `0xE0000000` (brightness 0) to strictly comply with the APA102 protocol
+- **Code cleanup** — removed unused debug timing code block from `display_pov()`
+
+---
+
 ## v2.3 (2026-07-03)
 
 ### ✨ New Features

@@ -34,7 +34,7 @@ WebServer server(80);
 #define MAX_IMAGES 20
 #define IMG_DIR "/img"
 #define IMG_INFO_FILE "/img/info.txt"
-#define MAX_IMG_NAME_LEN 24
+#define MAX_IMG_NAME_LEN 64
 
 uint8_t image_count = 0;
 uint8_t current_image_index = 0;
@@ -86,9 +86,10 @@ void ensure_img_dir() {
 }
 
 void save_image_info() {
-  File file = LittleFS.open(IMG_INFO_FILE, "w");
+  // 1. 임시 파일에 먼저 저장 (전원 차단 시 원본 보호)
+  File file = LittleFS.open(IMG_INFO_FILE ".tmp", "w");
   if (!file) {
-    Serial.println("[LittleFS] info.txt 쓰기 실패");
+    Serial.println("[LittleFS] info.txt.tmp 쓰기 실패");
     return;
   }
   file.printf("current=%d\n", current_image_index);
@@ -99,6 +100,10 @@ void save_image_info() {
     }
   }
   file.close();
+
+  // 2. 저장이 완료되면 기존 파일을 지우고 임시 파일을 원본으로 이름 변경 (Atomic 연산)
+  LittleFS.remove(IMG_INFO_FILE);
+  LittleFS.rename(IMG_INFO_FILE ".tmp", IMG_INFO_FILE);
 }
 
 void load_image_info() {
