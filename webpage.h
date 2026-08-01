@@ -728,7 +728,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <input type="password" id="wifi-pass" placeholder="비밀번호를 입력하세요" autocomplete="off">
                 </div>
                 <button class="btn-wifi-save" id="wifi-save-btn" onclick="saveWifi()">저장 후 재부팅</button>
-                <p class="wifi-hint">저장 후 ESP32를 재부팅하면 공유기에 자동 연결됩니다.</p>
+                <p class="wifi-hint">저장하면 ESP32가 자동으로 재부팅되어 공유기에 연결됩니다.</p>
                 <div class="ip-upload-status" id="ip-upload-status"></div>
             </div>
         </div>
@@ -1473,12 +1473,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         select.innerHTML = '<option value="">검색된 Wi-Fi가 없습니다.</option>';
                         return;
                     }
-                    let html = '<option value="">검색된 Wi-Fi를 선택하세요 (' + list.length + '개)</option>';
+                    select.innerHTML = '';  // SSID는 textContent로 삽입해 HTML 주입(XSS) 방지
+                    const placeholder = document.createElement('option');
+                    placeholder.value = '';
+                    placeholder.textContent = '검색된 Wi-Fi를 선택하세요 (' + list.length + '개)';
+                    select.appendChild(placeholder);
                     list.forEach(net => {
-                        const lock = net.secure ? '🔒' : '🔓';
-                        html += '<option value="' + net.ssid + '">' + net.ssid + ' (' + net.rssi + 'dBm ' + lock + ')</option>';
+                        const opt = document.createElement('option');
+                        opt.value = net.ssid;
+                        opt.textContent = net.ssid + ' (' + net.rssi + 'dBm ' + (net.secure ? '🔒' : '🔓') + ')';
+                        select.appendChild(opt);
                     });
-                    select.innerHTML = html;
                 })
                 .catch(err => {
                     if (btn) btn.disabled = false;
@@ -1517,10 +1522,23 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         function copyIp() {
             const raw = document.getElementById('wifi-ip-text').textContent;
             const ip = raw.split(' ')[0];
-            if (navigator.clipboard) {
-                navigator.clipboard.writeText(ip)
-                    .then(() => showStatus('IP 주소가 복사되었습니다.', 'success'))
-                    .catch(() => showStatus('복사 실패', 'error'));
+            const done = () => showStatus('IP 주소가 복사되었습니다.', 'success');
+            const fail = () => showStatus('복사 실패', 'error');
+            // navigator.clipboard는 HTTPS/보안 컨텍스트에서만 동작 → http://192.168.x.x 는 폴백 필요
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(ip).then(done).catch(fail);
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = ip;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                ta.setSelectionRange(0, 99999);
+                let ok = false;
+                try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                document.body.removeChild(ta);
+                ok ? done() : fail();
             }
         }
 
@@ -1538,18 +1556,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             })
             .then(r => r.json())
             .then(data => {
-                btn.disabled = false;
-                btn.textContent = '저장 후 재부팅';
                 if (data.status === 'ok') {
-                    showStatus(data.message, 'success');
+                    btn.disabled = true;
+                    btn.textContent = '재부팅 중...';
+                    showStatus('저장 완료. 기기가 재부팅됩니다...', 'success');
                 } else {
+                    btn.disabled = false;
+                    btn.textContent = '저장 후 재부팅';
                     showStatus('저장 실패: ' + (data.message || ''), 'error');
                 }
             })
             .catch(() => {
-                btn.disabled = false;
-                btn.textContent = '저장 후 재부팅';
-                showStatus('네트워크 에러', 'error');
+                // 응답 후 즉시 재부팅되어 연결이 끊긴 경우가 대부분 → 재부팅 진행 중으로 안내
+                btn.disabled = true;
+                btn.textContent = '재부팅 중...';
+                showStatus('저장되었습니다. 기기가 재부팅 중입니다...', 'success');
             });
         }
 

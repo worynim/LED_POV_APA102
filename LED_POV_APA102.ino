@@ -277,9 +277,10 @@ void handle_image_upload() {
       uploadFile = nullptr;
     }
 
-    // 빈 슬롯을 찾아서 직접 /img/N.raw 로 저장
+    // 빈 슬롯을 찾아서 직접 /img/N.raw 로 저장 (IP 전용 슬롯 제외)
     upload_slot = -1;
     for (int i = 0; i < MAX_IMAGES; i++) {
+      if (i == IP_IMAGE_SLOT) continue;
       if (!image_slots_used[i]) {
         upload_slot = i;
         break;
@@ -320,6 +321,7 @@ void handle_image_upload() {
         snprintf(image_names[upload_slot], MAX_IMG_NAME_LEN + 1, "image_%d.raw", upload_slot);
       }
       current_image_index = upload_slot;
+      showing_ip_image = false;  // IP 표시 모드 해제
       image_count = 0;
       for (int i = 0; i < MAX_IMAGES; i++) {
         if (image_slots_used[i]) image_count++;
@@ -335,6 +337,31 @@ void handle_image_upload() {
   }
 }
 
+// --- JSON 문자열 이스케이프 헬퍼 (SSID·이미지명 등 외부 입력을 JSON에 안전하게 삽입) ---
+String json_escape(const String& s) {
+  String out;
+  out.reserve(s.length() + 8);
+  for (unsigned int i = 0; i < s.length(); i++) {
+    char c = s[i];
+    switch (c) {
+      case '"':  out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n";  break;
+      case '\r': out += "\\r";  break;
+      case '\t': out += "\\t";  break;
+      default:
+        if ((uint8_t)c < 0x20) {
+          char hex[8];
+          snprintf(hex, sizeof(hex), "\\u%04x", (uint8_t)c);
+          out += hex;
+        } else {
+          out += c;  // UTF-8 멀티바이트(한글 등)는 그대로 통과
+        }
+    }
+  }
+  return out;
+}
+
 // --- 웹서버 API 핸들러 ---
 void handle_list_images() {
   String json;
@@ -344,12 +371,13 @@ void handle_list_images() {
   json += "\"images\":[";
   bool first = true;
   for (int i = 0; i < MAX_IMAGES; i++) {
+    if (i == IP_IMAGE_SLOT) continue;  // IP 전용 슬롯은 사용자 목록에서 제외
     if (image_slots_used[i]) {
       if (!first) json += ",";
       first = false;
       json += "{";
       json += "\"index\":" + String(i) + ",";
-      json += "\"name\":\"" + String(image_names[i]) + "\"";
+      json += "\"name\":\"" + json_escape(String(image_names[i])) + "\"";
       json += "}";
     }
   }
@@ -364,12 +392,13 @@ void handle_select_image() {
   }
 
   int idx = server.arg("index").toInt();
-  if (idx < 0 || idx >= MAX_IMAGES || !image_slots_used[idx]) {
+  if (idx < 0 || idx >= MAX_IMAGES || !image_slots_used[idx] || idx == IP_IMAGE_SLOT) {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"invalid index\"}");
     return;
   }
 
   current_image_index = idx;
+  showing_ip_image = false;  // IP 표시 모드 해제
   save_image_info();
   load_image_to_sram(idx);
 
@@ -387,7 +416,7 @@ void handle_delete_image() {
   }
 
   int idx = server.arg("index").toInt();
-  if (idx < 0 || idx >= MAX_IMAGES || !image_slots_used[idx]) {
+  if (idx < 0 || idx >= MAX_IMAGES || !image_slots_used[idx] || idx == IP_IMAGE_SLOT) {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"invalid index\"}");
     return;
   }
@@ -398,10 +427,11 @@ void handle_delete_image() {
   // 현재 이미지가 삭제된 경우 다른 이미지로 전환
   if (was_current) {
     if (image_count > 0) {
-      // 다음 사용 중인 슬롯 찾기 (idx+1 부터 순환)
+      // 다음 사용 중인 슬롯 찾기 (idx+1 부터 순환, IP 전용 슬롯 제외)
       int next = -1;
       for (int i = 1; i <= MAX_IMAGES; i++) {
         int candidate = (idx + i) % MAX_IMAGES;
+        if (candidate == IP_IMAGE_SLOT) continue;
         if (image_slots_used[candidate]) {
           next = candidate;
           break;
@@ -409,12 +439,14 @@ void handle_delete_image() {
       }
       if (next >= 0) {
         current_image_index = next;
+        showing_ip_image = false;  // IP 표시 모드 해제
         load_image_to_sram(next);
         save_image_info();
       }
     } else {
       // 저장된 이미지가 없으면 버퍼 비우기
       current_image_index = 0;
+      showing_ip_image = false;
       if (img_buffer != nullptr) {
         free(img_buffer);
         img_buffer = nullptr;
@@ -490,29 +522,30 @@ void cycle_to_next_image() {
     Serial.println("[Button] 저장된 이미지가 없습니다.");
     return;
   }
-  if (image_count == 1) {
-    Serial.println("[Button] 이미지가 1개뿐이라 순환하지 않습니다.");
-    return;
-  }
 
-  // 현재 인덱스 이후로 순환하며 다음 사용 중인 슬롯 검색 (IP 전용 슬롯 제외)
+  // 현재 인덱스 이후로 순환하며 다음 사용 중인 슬롯 검색 (IP 전용 슬롯·현재 슬롯 제외)
   int next = -1;
   for (int i = 1; i <= MAX_IMAGES; i++) {
     int candidate = (current_image_index + i) % MAX_IMAGES;
-    if (candidate == IP_IMAGE_SLOT) continue;  // IP 전용 슬롯 건너뜀
+    if (candidate == IP_IMAGE_SLOT) continue;        // IP 전용 슬롯 건너뜀
+    if (candidate == current_image_index) continue;  // 자기 자신으로 순환 방지
     if (image_slots_used[candidate]) {
       next = candidate;
       break;
     }
   }
 
-  if (next >= 0) {
-    current_image_index = next;
-    save_image_info();
-    load_image_to_sram(next);
-    indicate_image_index();
-    Serial.printf("[Button] 이미지 %d (%s) 로 전환\n", next, image_names[next]);
+  if (next < 0) {
+    Serial.println("[Button] 순환 가능한 다른 이미지가 없습니다.");
+    return;
   }
+
+  current_image_index = next;
+  showing_ip_image = false;  // IP 표시 모드 해제
+  save_image_info();
+  load_image_to_sram(next);
+  indicate_image_index();
+  Serial.printf("[Button] 이미지 %d (%s) 로 전환\n", next, image_names[next]);
 }
 
 // --- IP POV 이미지 생성용 5x7 픽셀 폰트 (0~9, '.') ---
@@ -679,6 +712,7 @@ void init_wifi() {
       return;
     }
     Serial.println("[WiFi] STA 연결 실패 → AP 모드로 전환");
+    WiFi.disconnect(true);  // STA 시도 잔여 상태 제거 후 AP 전환
   }
 
   // AP 모드 폴백 (192.168.4.1)
@@ -725,11 +759,13 @@ void toggle_ip_display() {
 
 // --- Wi-Fi 스캔 API ---
 void handle_wifi_scan() {
-  int n = WiFi.scanNetworks();
-  String json = "[";
+  int n = WiFi.scanNetworks();  // 주의: 블로킹 호출 (1~3초) — 스캔 중 POV 렌더링이 잠시 멈춤
+  String json;
+  json.reserve(2048);  // heap 단편화 방지
+  json = "[";
   for (int i = 0; i < n; ++i) {
     if (i > 0) json += ",";
-    json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + ",\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false") + "}";
+    json += "{\"ssid\":\"" + json_escape(WiFi.SSID(i)) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + ",\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false") + "}";
   }
   json += "]";
   WiFi.scanDelete();
@@ -752,8 +788,8 @@ void handle_wifi_status() {
   String json = "{";
   json += "\"mode\":\"" + String(is_sta_mode ? "STA" : "AP") + "\",";
   json += "\"ip\":\"" + ip + "\",";
-  json += "\"ssid\":\"" + ssid_cur + "\",";
-  json += "\"saved_ssid\":\"" + saved_ssid + "\"";
+  json += "\"ssid\":\"" + json_escape(ssid_cur) + "\",";
+  json += "\"saved_ssid\":\"" + json_escape(saved_ssid) + "\"";
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -767,13 +803,27 @@ void handle_wifi_save() {
   String ssid = server.arg("ssid");
   String pass = server.arg("pass");
 
+  // 줄바꿈 제거 — init_wifi()의 readStringUntil('\n') 파싱과의 호환성
+  ssid.replace("\n", "");
+  ssid.replace("\r", "");
+  pass.replace("\n", "");
+  pass.replace("\r", "");
+
+  if (ssid.length() == 0) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"ssid required\"}");
+    return;
+  }
+
   File f = LittleFS.open(WIFI_SSID_FILE, "w");
   if (f) { f.print(ssid); f.close(); }
   f = LittleFS.open(WIFI_PASS_FILE, "w");
   if (f) { f.print(pass); f.close(); }
 
   server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"저장 완료. 재부팅 후 적용됩니다.\"}");
+  server.client().flush();  // 응답 전송 완료 보장
   Serial.printf("[WiFi] 자격증명 저장: SSID='%s'\n", ssid.c_str());
+  delay(500);               // 클라이언트에 응답이 도달할 시간 확보
+  ESP.restart();            // 재부팅 후 init_wifi()가 저장된 자격증명으로 STA 연결 시도
 }
 
 

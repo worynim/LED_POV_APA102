@@ -1,5 +1,24 @@
 # Release Notes
 
+## v2.5.1 (2026-08-02)
+
+### 🐛 Bug Fixes
+
+- **SSID / image-name JSON escaping** — SSIDs (from `/wifi-scan`, `/wifi-status`) and saved image names (`/list`) containing `"`, `\`, or control characters are now escaped via a shared `json_escape()` helper, preventing malformed JSON responses and browser-side injection
+- **Wi-Fi scan dropdown XSS** — network list options are now built with `createElement('option')` + `textContent` instead of HTML string concatenation, so a malicious nearby AP's SSID can no longer inject HTML/JS into the page
+- **"저장 후 재부팅" button now actually reboots** — `/wifi-save` flushes the HTTP response, waits ~500ms, then calls `ESP.restart()`; previously it only saved credentials and required a manual power cycle
+- **Button cycle-to-self** — short-press no longer wraps around to the currently displayed image when only one non-IP image is saved; it now returns cleanly instead of silently reloading the same slot
+- **IP display state desync** — slot 19 is now fully reserved: excluded from `/list`, rejected by `/select` and `/delete`, skipped in upload and delete-fallback slot searches, and `showing_ip_image` is reset whenever a different image is selected/uploaded/cycled
+- **Wi-Fi credential newline handling** — `\n` / `\r` in SSID/password are stripped on save so `init_wifi()`'s `readStringUntil('\n')` parsing can't truncate them
+
+### 🔧 Improvements
+
+- **AP fallback reliability** — `WiFi.disconnect(true)` is called after a failed STA attempt before switching to AP mode, clearing stale STA state
+- **IP copy button on plain HTTP** — `copyIp()` falls back to `document.execCommand('copy')` when `navigator.clipboard` is unavailable (non-secure `http://192.168.x.x` contexts)
+- **Wi-Fi scan heap safety** — `/wifi-scan` JSON pre-allocated with `reserve(2048)` to reduce heap fragmentation, matching the existing `/list` pattern
+
+---
+
 ## v2.5 (2026-08-02)
 
 ### ✨ New Features
