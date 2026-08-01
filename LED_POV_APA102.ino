@@ -35,6 +35,10 @@ WebServer server(80);
 #define IMG_DIR "/img"
 #define IMG_INFO_FILE "/img/info.txt"
 #define MAX_IMG_NAME_LEN 64
+#define IP_IMAGE_SLOT 19          // 로컬 IP 전용 예약 슬롯
+#define WIFI_SSID_FILE "/wifi_ssid.txt"
+#define WIFI_PASS_FILE "/wifi_pass.txt"
+#define LONG_PRESS_MS 1000        // 길게 누름 판정 시간 (ms)
 
 uint8_t image_count = 0;
 uint8_t current_image_index = 0;
@@ -74,8 +78,16 @@ volatile bool is_uploading = false;
 unsigned long last_button_debounce_time = 0;
 const unsigned long DEBOUNCE_DELAY = 50;
 bool last_button_reading = HIGH;
-bool button_state = HIGH;   // 디바운스된 안정 상태
-bool button_pressed = false;
+bool button_state = HIGH;           // 디바운스된 안정 상태
+bool button_pressed = false;        // 단 누름 이벤트 플래그
+bool button_long_pressed = false;   // 장 누름 이벤트 플래그
+bool button_held = false;           // 버튼 누르고 있는 상태
+bool long_press_triggered = false;  // 장 누름 이미 트리거됨 플래그
+unsigned long button_press_start = 0; // 버튼 누르기 시작 시각
+
+// --- Wi-Fi 상태 변수 ---
+bool is_sta_mode = false;           // STA 모드 연결 여부
+bool showing_ip_image = false;      // IP 이미지 표시 중 여부
 
 // --- LittleFS 유틸리티 함수 ---
 void ensure_img_dir() {
@@ -483,10 +495,11 @@ void cycle_to_next_image() {
     return;
   }
 
-  // 현재 인덱스 이후로 순환하며 다음 사용 중인 슬롯 검색
+  // 현재 인덱스 이후로 순환하며 다음 사용 중인 슬롯 검색 (IP 전용 슬롯 제외)
   int next = -1;
   for (int i = 1; i <= MAX_IMAGES; i++) {
     int candidate = (current_image_index + i) % MAX_IMAGES;
+    if (candidate == IP_IMAGE_SLOT) continue;  // IP 전용 슬롯 건너뜀
     if (image_slots_used[candidate]) {
       next = candidate;
       break;
@@ -501,6 +514,268 @@ void cycle_to_next_image() {
     Serial.printf("[Button] 이미지 %d (%s) 로 전환\n", next, image_names[next]);
   }
 }
+
+// --- IP POV 이미지 생성용 5x7 픽셀 폰트 (0~9, '.') ---
+// 각 문자: 7행 x 5비트 (하위 5비트 사용)
+static const uint8_t IP_FONT[11][7] = {
+  {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}, // '0'
+  {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}, // '1'
+  {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}, // '2'
+  {0x1E,0x01,0x01,0x0E,0x01,0x01,0x1E}, // '3'
+  {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}, // '4'
+  {0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E}, // '5'
+  {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}, // '6'
+  {0x1F,0x01,0x02,0x04,0x08,0x08,0x08}, // '7'
+  {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}, // '8'
+  {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}, // '9'
+  {0x00,0x00,0x00,0x00,0x00,0x04,0x04}, // '.'
+};
+
+// 문자 -> 폰트 인덱스 변환
+int8_t ip_font_index(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c == '.') return 10;
+  return -1;
+}
+
+// --- IP 주소를 POV 이미지로 ESP32 내부에서 직접 렌더링하여 슬롯 19에 저장 ---
+// 파라미터:
+//   ip  : 표시할 IP 문자열 (예: "192.168.10.54")
+void generate_ip_image(const String& ip) {
+  // 2번째 점 이후에서 2줄로 분할
+  // 예: "192.168.10.54" → line1="192.168." / line2="10.54"
+  String line1 = ip, line2 = "";
+  int dot_count = 0;
+  for (int i = 0; i < (int)ip.length(); i++) {
+    if (ip[i] == '.') dot_count++;
+    if (dot_count == 2) {
+      line1 = ip.substring(0, i + 1);
+      line2 = ip.substring(i + 1);
+      break;
+    }
+  }
+
+  // 폰트 픽셀 상수
+  const uint8_t FONT_W  = 5;
+  const uint8_t FONT_H  = 7;
+  const uint8_t SCALE   = 2;               // 2배 확대 → 문자 10x14px (상단 쪽에 작게 디스플레이)
+  const uint8_t CHAR_W  = FONT_W * SCALE;  // 10px
+  const uint8_t CHAR_H  = FONT_H * SCALE;  // 14px
+  const uint8_t CHAR_GAP = 2;              // 문자 간격
+  const uint8_t LINE_GAP = 4;              // 줄 간격
+
+  // 이미지 너비: 더 긴 줄 기준
+  int len1 = 0, len2 = 0;
+  for (int i = 0; i < (int)line1.length(); i++) if (ip_font_index(line1[i]) >= 0) len1++;
+  for (int i = 0; i < (int)line2.length(); i++) if (ip_font_index(line2[i]) >= 0) len2++;
+  uint16_t img_w = (uint16_t)(max(len1, len2) * (CHAR_W + CHAR_GAP) + 4);
+  if (img_w > 300) img_w = 300;
+  if (img_w < 8)   img_w = 8;
+
+  // LED 상단부(위에서 중간까지만 사용)에 배치: Y 오프셋을 상단에 지정
+  int y_offset = 2;  // 상단 여백 2px
+
+  // 버퍼 할당 (헤더 2바이트 + 컬럼 우선 RGB)
+  size_t buf_size = (size_t)2 + (size_t)img_w * NUM_LEDS * 3;
+  uint8_t* buf = (uint8_t*)calloc(1, buf_size);
+  if (!buf) { Serial.println("[IP-Image] 메모리 할당 실패"); return; }
+
+  buf[0] = (img_w >> 8) & 0xFF;
+  buf[1] = img_w & 0xFF;
+
+  // 픽셀 색상: accent 청록색
+  const uint8_t CR = 102, CG = 252, CB = 241;
+
+  // 줄 단위 렌더링
+  bool has_line2 = (line2.length() > 0);
+  String lines_arr[2] = {line1, line2};
+  int num_lines = has_line2 ? 2 : 1;
+
+  for (int li = 0; li < num_lines; li++) {
+    const String& txt = lines_arr[li];
+    int y_start = y_offset + li * (CHAR_H + LINE_GAP);
+    
+    // 해당 줄의 실제 픽셀 너비 계산 후 가로 중앙 정렬 x_pos 산출
+    int valid_chars = 0;
+    for (int ci = 0; ci < (int)txt.length(); ci++) if (ip_font_index(txt[ci]) >= 0) valid_chars++;
+    int line_w = (valid_chars > 0) ? (valid_chars * CHAR_W + (valid_chars - 1) * CHAR_GAP) : 0;
+    int x_pos = (img_w > line_w) ? ((img_w - line_w) / 2) : 2;
+
+    for (int ci = 0; ci < (int)txt.length(); ci++) {
+      int8_t fi = ip_font_index(txt[ci]);
+      if (fi < 0) { x_pos += CHAR_W + CHAR_GAP; continue; }
+
+      for (int fy = 0; fy < FONT_H; fy++) {
+        uint8_t row = IP_FONT[fi][fy];
+        for (int fx = 0; fx < FONT_W; fx++) {
+          if (!((row >> (FONT_W - 1 - fx)) & 1)) continue;
+          for (int sy = 0; sy < SCALE; sy++) {
+            for (int sx = 0; sx < SCALE; sx++) {
+              int px = x_pos + fx * SCALE + sx;
+              int py = y_start + fy * SCALE + sy;
+              if (px >= img_w || py >= NUM_LEDS) continue;
+              // LED 아래쪽 = 인덱스 0
+              int led_y = NUM_LEDS - 1 - py;
+              size_t off = (size_t)2 + ((size_t)px * NUM_LEDS + led_y) * 3;
+              buf[off] = CR; buf[off+1] = CG; buf[off+2] = CB;
+            }
+          }
+        }
+      }
+      x_pos += CHAR_W + CHAR_GAP;
+    }
+  }
+
+  // 슬롯 19에 파일 저장
+  String dest = get_image_path(IP_IMAGE_SLOT);
+  LittleFS.remove(dest);
+  File file = LittleFS.open(dest, "w");
+  if (!file) { Serial.println("[IP-Image] 파일 생성 실패"); free(buf); return; }
+  file.write(buf, buf_size);
+  file.close();
+  free(buf);
+
+  // 메타데이터 업데이트
+  if (!image_slots_used[IP_IMAGE_SLOT]) {
+    image_slots_used[IP_IMAGE_SLOT] = true;
+    image_count++;
+  }
+  snprintf(image_names[IP_IMAGE_SLOT], MAX_IMG_NAME_LEN + 1, "LocalIP.raw");
+  save_image_info();
+  Serial.printf("[IP-Image] IP 이미지 생성 완료: %s → 슬롯 19 (%d x 72 px)\n",
+    ip.c_str(), img_w);
+}
+
+// --- Wi-Fi 초기화 (STA 시도 → 실패 시 AP 폴백) ---
+void init_wifi() {
+  String ssid = "";
+  String pass = "";
+
+  if (LittleFS.exists(WIFI_SSID_FILE)) {
+    File f = LittleFS.open(WIFI_SSID_FILE, "r");
+    if (f) { ssid = f.readStringUntil('\n'); ssid.trim(); f.close(); }
+  }
+  if (LittleFS.exists(WIFI_PASS_FILE)) {
+    File f = LittleFS.open(WIFI_PASS_FILE, "r");
+    if (f) { pass = f.readStringUntil('\n'); pass.trim(); f.close(); }
+  }
+
+  if (ssid.length() > 0) {
+    Serial.printf("[WiFi] STA 모드 시도: SSID='%s'\n", ssid.c_str());
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid.c_str(), pass.c_str());
+
+    unsigned long sta_start = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - sta_start) < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+      is_sta_mode = true;
+      Serial.printf("[WiFi] STA 연결 성공! IP: %s\n", WiFi.localIP().toString().c_str());
+      generate_ip_image(WiFi.localIP().toString());  // STA IP를 POV 이미지로 자동 생성
+      return;
+    }
+    Serial.println("[WiFi] STA 연결 실패 → AP 모드로 전환");
+  }
+
+  // AP 모드 폴백 (192.168.4.1)
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ap_ssid);
+  IPAddress ap_ip = WiFi.softAPIP();
+  Serial.printf("[WiFi] AP 모드 시작: IP=%s\n", ap_ip.toString().c_str());
+  is_sta_mode = false;
+  generate_ip_image(ap_ip.toString());  // AP IP (192.168.4.1)를 POV 이미지로 자동 생성
+}
+
+// --- 장누름 감지 피드백 LED (첫 번째 LED만 빨간색 켜졌다가 소등) ---
+void indicate_long_press() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i].r = 0;
+    leds[i].g = 0;
+    leds[i].b = 0;
+  }
+  leds[0].r = 255;  // 첫 번째 LED 빨간색 점등
+  show_apa102_fast();
+  delay(300);
+  clear_apa102_fast();
+}
+
+// --- IP 이미지 표시/복귀 토글 ---
+void toggle_ip_display() {
+  indicate_long_press();  // 스위치 길게 누름 피드백 (LED 1번 빨간색)
+
+  if (!image_slots_used[IP_IMAGE_SLOT]) {
+    Serial.println("[Button-Long] IP 이미지 없음");
+    return;
+  }
+
+  if (!showing_ip_image) {
+    showing_ip_image = true;
+    load_image_to_sram(IP_IMAGE_SLOT);
+    Serial.println("[Button-Long] IP 이미지 표시");
+  } else {
+    showing_ip_image = false;
+    load_image_to_sram(current_image_index);
+    Serial.printf("[Button-Long] 원래 이미지(%d)로 복귀\n", current_image_index);
+  }
+}
+
+// --- Wi-Fi 스캔 API ---
+void handle_wifi_scan() {
+  int n = WiFi.scanNetworks();
+  String json = "[";
+  for (int i = 0; i < n; ++i) {
+    if (i > 0) json += ",";
+    json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + ",\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false") + "}";
+  }
+  json += "]";
+  WiFi.scanDelete();
+  server.send(200, "application/json", json);
+  Serial.printf("[WiFi] 스캔 완료: %d개 감지\n", n);
+}
+
+// --- Wi-Fi 상태 조회 API ---
+void handle_wifi_status() {
+  String ip = is_sta_mode ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+  String ssid_cur = is_sta_mode ? WiFi.SSID() : String(ap_ssid);
+
+  // 저장된 SSID도 함께 전달 (설정 폼 자동 채우기용)
+  String saved_ssid = "";
+  if (LittleFS.exists(WIFI_SSID_FILE)) {
+    File f = LittleFS.open(WIFI_SSID_FILE, "r");
+    if (f) { saved_ssid = f.readStringUntil('\n'); saved_ssid.trim(); f.close(); }
+  }
+
+  String json = "{";
+  json += "\"mode\":\"" + String(is_sta_mode ? "STA" : "AP") + "\",";
+  json += "\"ip\":\"" + ip + "\",";
+  json += "\"ssid\":\"" + ssid_cur + "\",";
+  json += "\"saved_ssid\":\"" + saved_ssid + "\"";
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+// --- Wi-Fi 자격증명 저장 API ---
+void handle_wifi_save() {
+  if (!server.hasArg("ssid")) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"ssid required\"}");
+    return;
+  }
+  String ssid = server.arg("ssid");
+  String pass = server.arg("pass");
+
+  File f = LittleFS.open(WIFI_SSID_FILE, "w");
+  if (f) { f.print(ssid); f.close(); }
+  f = LittleFS.open(WIFI_PASS_FILE, "w");
+  if (f) { f.print(pass); f.close(); }
+
+  server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"저장 완료. 재부팅 후 적용됩니다.\"}");
+  Serial.printf("[WiFi] 자격증명 저장: SSID='%s'\n", ssid.c_str());
+}
+
 
 void setup() {
   Serial.begin(115200);
@@ -530,11 +805,8 @@ void setup() {
   // 저장되어 있는 현재 이미지 로드
   load_image_to_sram(current_image_index);
 
-  // Wi-Fi AP 설정
-  WiFi.softAP(ap_ssid);
-  IPAddress IP = WiFi.softAPIP();
-  Serial.print("AP IP Address: ");
-  Serial.println(IP);
+  // Wi-Fi 초기화 (STA 시도 → 실패 시 AP 폴백)
+  init_wifi();
 
   // 웹서버 경로 바인딩
   server.on("/", HTTP_GET, []() {
@@ -556,6 +828,12 @@ void setup() {
   server.on("/delete", HTTP_POST, handle_delete_image);
   // 썸네일 이미지 데이터 API
   server.on("/data", HTTP_GET, handle_image_data);
+  // Wi-Fi 상태 조회 API
+  server.on("/wifi-status", HTTP_GET, handle_wifi_status);
+  // Wi-Fi 스캔 API
+  server.on("/wifi-scan", HTTP_GET, handle_wifi_scan);
+  // Wi-Fi 자격증명 저장 API
+  server.on("/wifi-save", HTTP_POST, handle_wifi_save);
 
   server.begin();
   Serial.println("Web Server Started.");
@@ -704,7 +982,7 @@ void loop() {
     return;
   }
 
-  // --- 버튼 디바운스 처리 ---
+  // --- 버튼 디바운스 처리 (누른 상태 1초 경과 시 즉시 장누름 발동) ---
   {
     bool reading = digitalRead(SW_PIN);
     if (reading != last_button_reading) {
@@ -714,17 +992,37 @@ void loop() {
       // DEBOUNCE_DELAY 동안 안정된 상태만 인정
       if (reading != button_state) {
         button_state = reading;
-        if (button_state == LOW) {  // falling edge: 버튼 눌림
-          button_pressed = true;
+        if (button_state == LOW) {           // falling edge: 버튼 누름 시작
+          button_press_start = millis();
+          button_held = true;
+          long_press_triggered = false;
+        } else if (button_held) {            // rising edge: 버튼 릴리즈 (1초 전에 뗀 경우)
+          button_held = false;
+          if (!long_press_triggered) {
+            button_pressed = true;           // 단 누름 판정
+          }
         }
       }
     }
-    last_button_reading = reading;  // 이전 읽기값 갱신 (엣지 감지용)
+
+    // 누르고 있는 동안 1초(LONG_PRESS_MS) 경과 체크 (떼기 전 즉시 반응)
+    if (button_held && !long_press_triggered) {
+      if ((millis() - button_press_start) >= LONG_PRESS_MS) {
+        long_press_triggered = true;
+        button_long_pressed = true;          // 1초 지난 순간 즉시 장누름 발동
+      }
+    }
+
+    last_button_reading = reading;  // 이전 읽기값 갱신
   }
 
   if (button_pressed) {
     button_pressed = false;
     cycle_to_next_image();
+  }
+  if (button_long_pressed) {
+    button_long_pressed = false;
+    toggle_ip_display();
   }
 
   // MPU6050의 하드웨어 데이터 준비 완료 인터럽트가 트리거되었을 때만 처리

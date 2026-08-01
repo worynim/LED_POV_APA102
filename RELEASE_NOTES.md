@@ -1,5 +1,23 @@
 # Release Notes
 
+## v2.5 (2026-08-02)
+
+### ✨ New Features
+
+- **Wi-Fi Dual Mode (STA & AP)** — enter router SSID and password via Web UI; device connects in STA mode on boot with automatic fallback to AP mode (`POV_Stick_AP`) if connection fails or credentials are missing
+- **On-Device IP POV Rendering (Slot 19)** — ESP32 automatically generates a 2-line POV image of its local IP address (e.g. `192.168.10.54` or `192.168.4.1`) using a 5x7 pixel font bitmap on boot without requiring web interaction
+- **Wi-Fi Network Scanner** — `GET /wifi-scan` API & web dropdown list allowing easy selection of nearby Wi-Fi APs with RSSI signal strength and security indicator (🔒/🔓)
+- **Instant Long-Press & Red LED Feedback** — pressing the switch (GPIO9) for 1 second instantly triggers long-press feedback (lights LED #1 red for 300 ms) and toggles IP display mode without waiting for button release
+- **Centered Text Alignment for IP Display** — 2-line IP address POV image automatically calculates X-offsets per line for clean horizontal center alignment
+- **Web UI Footer** — added open-source repository link (`github.com/worynim/LED_POV_APA102`) and contact email (`arduinouno@kakao.com`)
+
+### 🔧 Improvements
+
+- **IP Font Scaling & Positioning** — scaled IP font to 2x (10x14 px per character) and aligned to the upper section of the LED stick (top to middle) for optimal legibility during swing
+- **Button Debounce Optimization** — separated single-click (cycle next image) and 1-second long-press (toggle IP display) logic to prevent false image skips on button release
+
+---
+
 ## v2.4 (2026-07-05)
 
 ### 🐛 Bug Fixes

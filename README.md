@@ -10,12 +10,14 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 
 - **72-LED column** — vertical resolution of the displayed image
 - **Motion-synced rendering** — MPU6050 gyro detects zero-crossings to trigger each column refresh
-- **Wi-Fi image upload** — browser-based drag-and-drop upload directly to the device (AP mode)
+- **Wi-Fi Dual Mode (STA & AP)** — connects to home/office router (STA mode) or creates standalone access point (`POV_Stick_AP`) with automatic fallback
+- **On-Device IP POV Display** — ESP32 automatically generates a 2-line POV image of its local IP address; toggle display anytime by long-pressing the button
+- **Wi-Fi Network Scanner** — scan and select nearby Wi-Fi APs directly from the web interface
 - **HSV color processing** — saturation boost (+50 %) and brightness reduction (-30 %) on the browser side for better POV appearance
 - **Custom APA102 driver** — 20 MHz hardware SPI for fast LED data transfer (no FastLED library needed)
-- **Multi‑image storage** — up to 20 images stored on LittleFS, switchable via button or web UI
+- **Multi‑image storage** — up to 20 images stored on LittleFS, switchable via button or web UI (slot 19 reserved for IP display)
 - **Text mode** — type text directly in web UI and display on the POV stick (multi‑line, 10 fonts, custom font file loading)
-- **Button image cycling** — GPIO9 push button cycles through saved images; LED bar indicates current index
+- **Button interaction** — short press (< 1s) cycles images with LED bar index indicator; 1-second long press (with LED #1 red indicator) toggles IP display
 - **Web image management** — browse saved images with pixel‑accurate thumbnails, select or delete directly
 - **Image name editing** — rename before upload; works with Mac, Windows, iOS, and Android browsers
 

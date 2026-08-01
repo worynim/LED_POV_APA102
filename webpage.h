@@ -516,6 +516,131 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             background: rgba(102, 252, 241, 0.25);
             border-color: var(--accent-color);
         }
+        /* --- Wi-Fi 설정 패널 --- */
+        .wifi-panel {
+            display: none;
+            flex-direction: column;
+            gap: 1.2rem;
+            animation: fadeIn 0.4s ease;
+        }
+        .wifi-status-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 0.8rem 1rem;
+        }
+        .wifi-mode-badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .badge-sta {
+            background: rgba(46, 204, 113, 0.2);
+            color: #2ecc71;
+            border: 1px solid rgba(46, 204, 113, 0.4);
+        }
+        .badge-ap {
+            background: rgba(241, 196, 15, 0.2);
+            color: #f1c40f;
+            border: 1px solid rgba(241, 196, 15, 0.4);
+        }
+        .wifi-ip-text {
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: var(--title-color);
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .wifi-ip-copy {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px;
+            color: #858994;
+            padding: 0.25rem 0.6rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .wifi-ip-copy:hover {
+            border-color: var(--accent-color);
+            color: var(--accent-color);
+        }
+        .wifi-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+        .wifi-form input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 0.7rem 1rem;
+            color: var(--title-color);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.3s;
+            width: 100%;
+        }
+        .wifi-form input:focus {
+            border-color: var(--accent-color);
+        }
+        .btn-wifi-save {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: #fff;
+            border: none;
+            border-radius: var(--border-radius);
+            padding: 0.9rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(46, 204, 113, 0.25);
+        }
+        .btn-wifi-save:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(46, 204, 113, 0.4);
+        }
+        .btn-wifi-save:disabled {
+            background: #2c3540;
+            color: #606f7b;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+        .wifi-hint {
+            font-size: 0.8rem;
+            color: #858994;
+            text-align: center;
+        }
+        /* --- 푸터 스타일 --- */
+        footer {
+            margin-top: 1rem;
+            padding-top: 1.2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            text-align: center;
+            font-size: 0.82rem;
+            color: #858994;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+        footer a {
+            color: var(--accent-color);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        footer a:hover {
+            color: var(--accent-hover);
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -528,6 +653,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div class="mode-tabs" id="mode-tabs">
             <button class="mode-tab active" id="tab-image">이미지</button>
             <button class="mode-tab" id="tab-text">텍스트</button>
+            <button class="mode-tab" id="tab-wifi">Wi-Fi</button>
         </div>
 
         <div class="drop-zone" id="drop-zone">
@@ -576,6 +702,37 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
+        <div class="wifi-panel" id="wifi-panel">
+            <div class="wifi-status-bar">
+                <span class="wifi-mode-badge badge-ap" id="wifi-mode-badge">AP</span>
+                <span class="wifi-ip-text" id="wifi-ip-text">로딩 중...</span>
+                <button class="wifi-ip-copy" id="wifi-ip-copy" onclick="copyIp()">복사</button>
+            </div>
+            <div class="preview-title">Wi-Fi 설정</div>
+            <div class="wifi-form">
+                <div class="control-group">
+                    <label for="wifi-scan-select">주변 Wi-Fi 목록</label>
+                    <div class="font-input-row">
+                        <select id="wifi-scan-select" onchange="onSelectWifi(this)">
+                            <option value="">Wi-Fi를 검색 중이거나 선택하세요</option>
+                        </select>
+                        <button type="button" class="btn-load-font" id="btn-scan-wifi" onclick="scanWifi()" title="Wi-Fi 새로고침">🔄</button>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label for="wifi-ssid">SSID (공유기 이름)</label>
+                    <input type="text" id="wifi-ssid" placeholder="공유기 SSID를 직접 입력하거나 위에서 선택하세요" autocomplete="off">
+                </div>
+                <div class="control-group">
+                    <label for="wifi-pass">Password</label>
+                    <input type="password" id="wifi-pass" placeholder="비밀번호를 입력하세요" autocomplete="off">
+                </div>
+                <button class="btn-wifi-save" id="wifi-save-btn" onclick="saveWifi()">저장 후 재부팅</button>
+                <p class="wifi-hint">저장 후 ESP32를 재부팅하면 공유기에 자동 연결됩니다.</p>
+                <div class="ip-upload-status" id="ip-upload-status"></div>
+            </div>
+        </div>
+
         <div class="preview-section" id="preview-section">
             <div class="preview-title">LED 출력 미리보기</div>
             <div class="canvas-container">
@@ -620,6 +777,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <span id="current-name">-</span>
             </div>
         </div>
+
+        <footer>
+            <div>GitHub: <a href="https://github.com/worynim/LED_POV_APA102" target="_blank" rel="noopener">github.com/worynim/LED_POV_APA102</a></div>
+            <div>Email: <a href="mailto:arduinouno@kakao.com">arduinouno@kakao.com</a></div>
+        </footer>
     </div>
 
     <script>
@@ -1044,14 +1206,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             currentMode = mode;
             tabImage.classList.toggle('active', mode === 'image');
             tabText.classList.toggle('active', mode === 'text');
+            tabWifi.classList.toggle('active', mode === 'wifi');
             if (mode === 'image') {
                 dropZone.style.display = '';
                 textModePanel.style.display = 'none';
-            } else {
+                wifiPanel.style.display = 'none';
+            } else if (mode === 'text') {
                 dropZone.style.display = 'none';
                 textModePanel.style.display = 'flex';
+                wifiPanel.style.display = 'none';
                 if (textInput.value.trim()) renderTextToCanvas();
                 else previewSection.style.display = 'none';
+            } else if (mode === 'wifi') {
+                dropZone.style.display = 'none';
+                textModePanel.style.display = 'none';
+                wifiPanel.style.display = 'flex';
+                scanWifi();
             }
         }
 
@@ -1110,6 +1280,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
             xhr.send(formData);
         });
+
+        // --- Wi-Fi 탭 이벤트 ---
+        const tabWifi = document.getElementById('tab-wifi');
+        const wifiPanel = document.getElementById('wifi-panel');
+        tabWifi.addEventListener('click', () => switchMode('wifi'));
 
         // --- 이미지 목록 API 함수 ---
         function fetchImageList() {
@@ -1282,8 +1457,107 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             .catch(() => showStatus('네트워크 에러', 'error'));
         }
 
+        // --- Wi-Fi 함수 ---
+        function scanWifi() {
+            const select = document.getElementById('wifi-scan-select');
+            const btn = document.getElementById('btn-scan-wifi');
+            if (select) select.innerHTML = '<option value="">Wi-Fi 검색 중...</option>';
+            if (btn) btn.disabled = true;
+
+            fetch('/wifi-scan')
+                .then(r => r.json())
+                .then(list => {
+                    if (btn) btn.disabled = false;
+                    if (!select) return;
+                    if (!list || list.length === 0) {
+                        select.innerHTML = '<option value="">검색된 Wi-Fi가 없습니다.</option>';
+                        return;
+                    }
+                    let html = '<option value="">검색된 Wi-Fi를 선택하세요 (' + list.length + '개)</option>';
+                    list.forEach(net => {
+                        const lock = net.secure ? '🔒' : '🔓';
+                        html += '<option value="' + net.ssid + '">' + net.ssid + ' (' + net.rssi + 'dBm ' + lock + ')</option>';
+                    });
+                    select.innerHTML = html;
+                })
+                .catch(err => {
+                    if (btn) btn.disabled = false;
+                    if (select) select.innerHTML = '<option value="">Wi-Fi 스캔 실패</option>';
+                    console.error('Wi-Fi 스캔 실패:', err);
+                });
+        }
+
+        function onSelectWifi(selectEl) {
+            const val = selectEl.value;
+            if (val) {
+                document.getElementById('wifi-ssid').value = val;
+                showStatus("SSID '" + val + "'이(가) 선택되었습니다.", 'success');
+            }
+        }
+
+        function fetchWifiStatus() {
+            fetch('/wifi-status')
+                .then(r => r.json())
+                .then(data => {
+                    const badge = document.getElementById('wifi-mode-badge');
+                    const ipText = document.getElementById('wifi-ip-text');
+                    const ssidInput = document.getElementById('wifi-ssid');
+                    badge.textContent = data.mode;
+                    badge.className = 'wifi-mode-badge ' + (data.mode === 'STA' ? 'badge-sta' : 'badge-ap');
+                    if (data.mode === 'STA') {
+                        ipText.textContent = data.ip + ' (' + data.ssid + ')';
+                    } else {
+                        ipText.textContent = data.ip + ' (AP: ' + data.ssid + ')';
+                    }
+                    if (data.saved_ssid) ssidInput.value = data.saved_ssid;
+                })
+                .catch(err => console.error('Wi-Fi 상태 불러오기 실패:', err));
+        }
+
+        function copyIp() {
+            const raw = document.getElementById('wifi-ip-text').textContent;
+            const ip = raw.split(' ')[0];
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(ip)
+                    .then(() => showStatus('IP 주소가 복사되었습니다.', 'success'))
+                    .catch(() => showStatus('복사 실패', 'error'));
+            }
+        }
+
+        function saveWifi() {
+            const ssid = document.getElementById('wifi-ssid').value.trim();
+            const pass = document.getElementById('wifi-pass').value;
+            if (!ssid) { showStatus('SSID를 입력해주세요.', 'error'); return; }
+            const btn = document.getElementById('wifi-save-btn');
+            btn.disabled = true;
+            btn.textContent = '저장 중...';
+            fetch('/wifi-save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'ssid=' + encodeURIComponent(ssid) + '&pass=' + encodeURIComponent(pass)
+            })
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.textContent = '저장 후 재부팅';
+                if (data.status === 'ok') {
+                    showStatus(data.message, 'success');
+                } else {
+                    showStatus('저장 실패: ' + (data.message || ''), 'error');
+                }
+            })
+            .catch(() => {
+                btn.disabled = false;
+                btn.textContent = '저장 후 재부팅';
+                showStatus('네트워크 에러', 'error');
+            });
+        }
+
         // 페이지 로드 시 이미지 목록 불러오기
-        window.addEventListener('load', fetchImageList);
+        window.addEventListener('load', () => {
+            fetchImageList();
+            fetchWifiStatus();
+        });
     </script>
 </body>
 </html>
