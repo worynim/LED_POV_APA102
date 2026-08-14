@@ -107,6 +107,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             animation: fadeIn 0.5s ease;
         }
 
+        .color-adjust-section {
+            display: none;
+            flex-direction: column;
+            gap: 0.9rem;
+            background: rgba(0, 0, 0, 0.15);
+            padding: 1rem;
+            border-radius: 8px;
+        }
+
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -752,6 +761,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <span id="info-memory">-</span>
                 </div>
             </div>
+            <div class="color-adjust-section" id="color-adjust-section">
+                <div class="preview-title">색상 보정 (이미지 모드)</div>
+                <div class="control-group">
+                    <label for="sat-slider">채도: <span id="sat-value">1.7</span></label>
+                    <input type="range" id="sat-slider" min="0" max="3.0" value="1.7" step="0.1">
+                </div>
+                <div class="control-group">
+                    <label for="bright-slider">밝기: <span id="bright-value">0.3</span></label>
+                    <input type="range" id="bright-slider" min="0.05" max="1.0" value="0.3" step="0.05">
+                </div>
+            </div>
             <div class="name-input-group" id="name-input-group">
                 <label>저장할 이름 <span style="color:#858994;font-weight:400;">(수정 가능)</span></label>
                 <input type="text" id="image-name" placeholder="파일명을 입력하세요" maxlength="24">
@@ -795,6 +815,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const previewCanvas = document.getElementById('preview-canvas');
         const infoResolution = document.getElementById('info-resolution');
         const infoMemory = document.getElementById('info-memory');
+        const colorAdjustSection = document.getElementById('color-adjust-section');
+        const satSlider = document.getElementById('sat-slider');
+        const satValue = document.getElementById('sat-value');
+        const brightSlider = document.getElementById('bright-slider');
+        const brightValue = document.getElementById('bright-value');
         const uploadBtn = document.getElementById('upload-btn');
         const progressContainer = document.getElementById('progress-container');
         const progressBar = document.getElementById('progress-bar');
@@ -819,6 +844,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         let imgWidth = 0;
         let imgHeight = 72; // Target POV height
         let originalFileName = '';
+        let currentImage = null; // 색상 보정 재적용용 최근 이미지
 
         // 텍스트 모드 상태
         let currentMode = 'image';
@@ -939,6 +965,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 const img = new Image();
                 img.src = event.target.result;
                 img.onload = function() {
+                    currentImage = img;
                     processImage(img);
                 };
             };
@@ -1033,9 +1060,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     // 1. HSV 공간으로 변환
                     let hsv = rgbToHsv(r, g, b);
 
-                    // 2. 채도 증폭 & 밝기 감소 필터 적용
-                    const SATURATION_SCALE = 1.7; // 채도 증가 배율 (1.0이 원본, 숫자가 클수록 진해짐)
-                    const BRIGHTNESS_SCALE = 0.3; // 밝기 감소 배율 (1.0이 원본, 0.5는 밝기를 절반으로 줄임)
+                    // 2. 채도 증폭 & 밝기 감소 필터 적용 (웹 UI 슬라이더 값 사용)
+                    const SATURATION_SCALE = parseFloat(satSlider.value);   // 채도 배율 (1.0이 원본)
+                    const BRIGHTNESS_SCALE = parseFloat(brightSlider.value); // 밝기 배율 (1.0이 원본)
 
                     hsv.s = Math.min(1.0, hsv.s * SATURATION_SCALE); // 채도를 높이되 최대치 1.0 제한
                     hsv.v = hsv.v * BRIGHTNESS_SCALE;               // 밝기 감소
@@ -1054,6 +1081,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             infoMemory.textContent = `${Math.round(rawBuffer.length / 1024 * 10) / 10} KB`;
             
             previewSection.style.display = 'flex';
+            colorAdjustSection.style.display = 'flex'; // 색상 보정 슬라이더 표시 (이미지 모드)
             // 파일명 입력 필드 표시 + 자동 채우기
             const nameInput = document.getElementById('image-name');
             const nameGroup = document.getElementById('name-input-group');
@@ -1061,6 +1089,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             nameGroup.style.display = 'flex';
             showStatus('이미지 분석 완료. POV 스틱에 전송할 준비가 되었습니다.', 'success');
         }
+
+        // --- 색상 보정 슬라이더 (이미지 모드): 값 변경 시 실시간 미리보기 재처리 ---
+        satSlider.addEventListener('input', () => {
+            satValue.textContent = (Math.round(parseFloat(satSlider.value) * 100) / 100).toString();
+            if (currentImage) processImage(currentImage);
+        });
+        brightSlider.addEventListener('input', () => {
+            brightValue.textContent = (Math.round(parseFloat(brightSlider.value) * 100) / 100).toString();
+            if (currentImage) processImage(currentImage);
+        });
 
         function showStatus(text, type) {
             statusMessage.textContent = text;
@@ -1102,6 +1140,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             if (!text) {
                 rawBuffer = null;
                 previewSection.style.display = 'none';
+                colorAdjustSection.style.display = 'none';
                 return;
             }
 
@@ -1199,6 +1238,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             infoResolution.textContent = w + ' x 72 px';
             infoMemory.textContent = Math.round(rawBuffer.length / 1024 * 10) / 10 + ' KB';
             previewSection.style.display = 'flex';
+            colorAdjustSection.style.display = 'none'; // 텍스트 모드는 색상 보정 슬라이더 숨김
             const nameInput = document.getElementById('image-name');
             const nameGroup = document.getElementById('name-input-group');
             nameInput.value = text.replace(/[\\/:*?"<>|\n]/g, '_').substring(0, 18).trim() || 'text';
@@ -1215,10 +1255,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 dropZone.style.display = '';
                 textModePanel.style.display = 'none';
                 wifiPanel.style.display = 'none';
+                colorAdjustSection.style.display = 'flex'; // 이미지 로드 시에만 실제로 보임 (preview-section이 가려져 있으면 안 보임)
             } else if (mode === 'text') {
                 dropZone.style.display = 'none';
                 textModePanel.style.display = 'flex';
                 wifiPanel.style.display = 'none';
+                colorAdjustSection.style.display = 'none';
                 if (textInput.value.trim()) renderTextToCanvas();
                 else previewSection.style.display = 'none';
             } else if (mode === 'wifi') {

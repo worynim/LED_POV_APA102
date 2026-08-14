@@ -7,6 +7,7 @@
 - **Captive Portal (AP mode)** — while running as an access point, the stick now answers every DNS query with its own IP (`192.168.4.1`) and redirects any non-local HTTP request to the web UI. Connect a phone/PC to `POV_Stick_AP` and the configuration page opens automatically in the browser — no need to type `http://192.168.4.1` manually
   - Uses the ESP32 core's built-in AsyncUDP-based `DNSServer` — no extra library install, no `loop()` polling, and DNS keeps answering even while `display_pov()` blocks the main loop
   - AP mode only: DNS spoofing is disabled in STA mode so normal network traffic is unaffected
+- **Configurable HSV color adjustment (image mode)** — the web UI now has 채도 (saturation) / 밝기 (brightness) sliders in the 색상 보정 panel that control the HSV filter applied on upload; defaults are the previous fixed values (×1.7 / ×0.3). Moving a slider re-renders the LED preview live. Text mode keeps raw colors (unchanged)
 
 ---
 

@@ -14,7 +14,7 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 - **On-Device IP POV Display** — ESP32 automatically generates a 2-line POV image of its local IP address; toggle display anytime by long-pressing the button
 - **Wi-Fi Network Scanner** — scan and select nearby Wi-Fi APs directly from the web interface
 - **Captive Portal (AP mode)** — connect a phone/PC to `POV_Stick_AP` and the web UI opens automatically (DNS spoofing + HTTP redirect); no need to type `192.168.4.1`
-- **HSV color processing** — saturation boost (×1.7) and brightness reduction (×0.3) on the browser side for better POV appearance
+- **HSV color processing** — adjustable saturation/brightness sliders in the web UI (defaults ×1.7 / ×0.3) for better POV appearance
 - **Custom APA102 driver** — 20 MHz hardware SPI for fast LED data transfer (no FastLED library needed)
 - **Multi‑image storage** — up to 20 images stored on LittleFS, switchable via button or web UI (slot 19 reserved for IP display)
 - **Text mode** — type text directly in web UI and display on the POV stick (multi‑line, 10 fonts, custom font file loading)
@@ -211,7 +211,7 @@ count=3
 When you upload an image via the web UI, JavaScript in the browser:
 
 1. Resizes the image to **72 px tall** (width scales proportionally, capped at 300 px).
-2. Converts RGB → HSV, adjusts saturation (×1.7) and value/brightness (×0.3), then converts back to RGB. This compensates for color washout typical in fast‑scrolling POV displays.
+2. Converts RGB → HSV, adjusts saturation and value/brightness using the sliders in the 색상 보정 panel (defaults ×1.7 and ×0.3), then converts back to RGB. This compensates for color washout typical in fast‑scrolling POV displays.
 3. Flips the image vertically (LED index 0 = bottom of the stick).
 4. Sends the raw binary data as a `multipart/form‑data` POST to `/upload?name=...`.
 
