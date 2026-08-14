@@ -4,6 +4,7 @@
 #include "MPU6050.h"
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <LittleFS.h>
 #include "webpage.h"
 
@@ -28,6 +29,7 @@ MPU6050 mpu;
 // --- Wi-Fi 및 웹서버 설정 ---
 const char* ap_ssid = "POV_Stick_AP";
 WebServer server(80);
+DNSServer dnsServer;  // Captive Portal용 DNS 스푸핑 (AsyncUDP 기반, 폴링 불필요)
 
 
 // --- 다중 이미지 설정 ---
@@ -721,6 +723,14 @@ void init_wifi() {
   IPAddress ap_ip = WiFi.softAPIP();
   Serial.printf("[WiFi] AP 모드 시작: IP=%s\n", ap_ip.toString().c_str());
   is_sta_mode = false;
+
+  // Captive Portal용 DNS 스푸핑 시작: 모든 도메인 질의를 AP IP로 응답
+  if (dnsServer.start(53, "*", ap_ip)) {
+    Serial.println("[WiFi] DNS 스푸핑 시작 (Captive Portal 활성화)");
+  } else {
+    Serial.println("[WiFi] DNS 스푸핑 시작 실패");
+  }
+
   generate_ip_image(ap_ip.toString());  // AP IP (192.168.4.1)를 POV 이미지로 자동 생성
 }
 
@@ -826,6 +836,29 @@ void handle_wifi_save() {
   ESP.restart();            // 재부팅 후 init_wifi()가 저장된 자격증명으로 STA 연결 시도
 }
 
+// --- Captive Portal 처리 (AP 모드) ---
+// 스마트폰/PC가 AP에 연결하면 OS가 captive portal 감지 요청을 보낸다.
+// DNSServer가 모든 도메인을 AP IP로 응답하므로, 외부 호스트명으로 들어온
+// HTTP 요청은 여기서 잡아 웹 설정 페이지(http://192.168.4.1/)로 리다이렉트한다.
+// (iOS: captive.apple.com, Android: connectivitycheck.gstatic.com,
+//  Windows: msftconnecttest.com → 302를 받으면 브라우저가 자동으로 열림)
+void handle_captive_portal() {
+  String host = server.hostHeader();
+
+  // AP 모드 + 자기 자신(AP IP)이 아닌 호스트 → 설정 페이지로 리다이렉트
+  if (!is_sta_mode && host.length() > 0 && host.indexOf(WiFi.softAPIP().toString()) == -1) {
+    String redirect_url = "http://" + WiFi.softAPIP().toString() + "/";
+    server.sendHeader("Location", redirect_url, true);
+    server.send(302, "text/plain", "Redirecting to POV Stick configuration page...");
+    Serial.printf("[Portal] 캡티브 포털 리다이렉트: %s -> %s\n", host.c_str(), redirect_url.c_str());
+    return;
+  }
+
+  // 자기 IP에 대한 등록되지 않은 경로 → 루트로 리다이렉트
+  server.sendHeader("Location", "/", true);
+  server.send(302, "text/plain", "Redirecting...");
+}
+
 
 void setup() {
   Serial.begin(115200);
@@ -884,6 +917,8 @@ void setup() {
   server.on("/wifi-scan", HTTP_GET, handle_wifi_scan);
   // Wi-Fi 자격증명 저장 API
   server.on("/wifi-save", HTTP_POST, handle_wifi_save);
+  // Captive Portal: 등록되지 않은 경로/외부 호스트 요청을 설정 페이지로 유도
+  server.onNotFound(handle_captive_portal);
 
   server.begin();
   Serial.println("Web Server Started.");

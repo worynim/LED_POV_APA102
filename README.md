@@ -13,7 +13,8 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 - **Wi-Fi Dual Mode (STA & AP)** — connects to home/office router (STA mode) or creates standalone access point (`POV_Stick_AP`) with automatic fallback
 - **On-Device IP POV Display** — ESP32 automatically generates a 2-line POV image of its local IP address; toggle display anytime by long-pressing the button
 - **Wi-Fi Network Scanner** — scan and select nearby Wi-Fi APs directly from the web interface
-- **HSV color processing** — saturation boost (+50 %) and brightness reduction (-30 %) on the browser side for better POV appearance
+- **Captive Portal (AP mode)** — connect a phone/PC to `POV_Stick_AP` and the web UI opens automatically (DNS spoofing + HTTP redirect); no need to type `192.168.4.1`
+- **HSV color processing** — saturation boost (×1.7) and brightness reduction (×0.3) on the browser side for better POV appearance
 - **Custom APA102 driver** — 20 MHz hardware SPI for fast LED data transfer (no FastLED library needed)
 - **Multi‑image storage** — up to 20 images stored on LittleFS, switchable via button or web UI (slot 19 reserved for IP display)
 - **Text mode** — type text directly in web UI and display on the POV stick (multi‑line, 10 fonts, custom font file loading)
@@ -53,8 +54,8 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 
 ### 1. Image Upload & Management
 1. Power up the stick — it creates a Wi‑Fi AP with SSID `POV_Stick_AP`.
-2. Connect to that network and browse to `http://192.168.4.1`.
-3. Drag & drop an image (or tap to choose on mobile) — the browser resizes it to **72 px tall** (max 300 px wide), processes colors in HSV space (saturation ×1.5, brightness ×0.7), and uploads the raw binary.
+2. Connect to that network — the captive portal auto-opens the web interface in the browser (or manually browse to `http://192.168.4.1`).
+3. Drag & drop an image (or tap to choose on mobile) — the browser resizes it to **72 px tall** (max 300 px wide), processes colors in HSV space (saturation ×1.7, brightness ×0.3), and uploads the raw binary.
 4. The ESP32 saves the image to LittleFS (`/img/N.raw`) and immediately loads it into SRAM.
 5. The web page automatically refreshes the image list showing a **pixel‑accurate thumbnail**, the file name, and resolution.
 6. Use the **button** (GPIO9) to cycle through saved images — the LED bar lights up `(index + 1)` LEDs to show the current position.
@@ -84,12 +85,12 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 | `SW_PIN` | 9 | Button pin (image cycle) |
 | `INTERRUPT_PIN` | 0 | MPU6050 interrupt pin |
 | `MAX_IMAGES` | 20 | Number of image slots |
-| `MAX_IMG_NAME_LEN` | 24 | Max file name length (bytes) |
+| `MAX_IMG_NAME_LEN` | 64 | Max file name length (bytes; accommodates NFD-encoded Korean) |
 | `ap_ssid` | `"POV_Stick_AP"` | Wi‑Fi AP SSID |
 | SPI frequency | 20 MHz | APA102 LED data rate |
 | I2C frequency | 800 kHz | MPU6050 bus speed |
-| `SATURATION_SCALE` | 1.5 | HSV saturation multiplier (browser‑side) |
-| `BRIGHTNESS_SCALE` | 0.7 | HSV brightness multiplier (browser‑side) |
+| `SATURATION_SCALE` | 1.7 | HSV saturation multiplier (browser‑side) |
+| `BRIGHTNESS_SCALE` | 0.3 | HSV brightness multiplier (browser‑side) |
 
 ---
 
@@ -105,6 +106,11 @@ The device exposes a simple HTTP API for the web interface:
 | POST | `/select` | Select active image — body: `index=N` |
 | POST | `/delete` | Delete image — body: `index=N` |
 | POST | `/upload?name=FILENAME` | Upload image (multipart form‑data) |
+| GET | `/wifi-status` | JSON: current Wi‑Fi mode, IP, SSID, saved SSID |
+| GET | `/wifi-scan` | JSON array of nearby APs (SSID, RSSI, secure flag) |
+| POST | `/wifi-save` | Save Wi‑Fi credentials (`ssid=...&pass=...`); auto‑reboots to apply |
+
+> Any request that matches no route is caught by the captive-portal handler and redirected to `/` (AP mode).
 
 ---
 
@@ -119,6 +125,7 @@ The device exposes a simple HTTP API for the web interface:
 | `WiFi.h` | ESP32 Wi‑Fi (AP mode) |
 | `WebServer.h` | HTTP server for image upload and API |
 | `LittleFS.h` | ESP32 LittleFS (file storage for images) |
+| `DNSServer.h` | ESP32 DNS server (captive portal DNS spoofing in AP mode) |
 
 ---
 
@@ -146,7 +153,7 @@ The device exposes a simple HTTP API for the web interface:
 
 ### First Boot
 - The stick creates the `POV_Stick_AP` Wi‑Fi network.
-- Connect to upload an image via the web interface at `http://192.168.4.1`.
+- Connect — the captive portal auto-opens the web interface in the browser (or browse to `http://192.168.4.1`) to upload an image.
 - Once an image is uploaded, it is saved to LittleFS and loaded on every subsequent boot.
 - Use the GPIO9 button to cycle through saved images.
 
@@ -157,7 +164,8 @@ The device exposes a simple HTTP API for the web interface:
 ```
 LED_POV_APA102/
 ├── LED_POV_APA102.ino    # Main firmware (setup, loop, motion detection, POV rendering,
-│                         # APA102 SPI driver, web server, multi‑image storage, button handling)
+│                         # APA102 SPI driver, web server, multi‑image storage, button handling,
+│                         # AP-mode captive portal)
 ├── webpage.h             # HTML/CSS/JS page served by the web server (browser‑side image
 │                         # processing, resize, color transform, upload, thumbnail rendering)
 ├── PLAN.md               # Hardware design notes and implementation plan (Korean)

@@ -501,6 +501,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .font-input-row input {
             flex: 1;
         }
+        .font-input-row select {
+            flex: 1;
+            min-width: 0;
+        }
         .btn-load-font {
             background: rgba(102, 252, 241, 0.15);
             border: 1px solid rgba(102, 252, 241, 0.3);
@@ -691,10 +695,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <input type="file" id="font-file-input" accept=".ttf,.otf,.woff,.woff2" style="display:none;">
                     <input type="hidden" id="custom-font-name" value="">
                 </div>
-                <div class="control-group control-half">
-                    <label for="text-color">글자 색상</label>
-                    <input type="color" id="text-color" value="#ffffff">
-                </div>
+            </div>
+            <div class="control-group">
+                <label for="text-color">글자 색상</label>
+                <input type="color" id="text-color" value="#ffffff">
             </div>
             <div class="control-group">
                 <label for="text-size">글자 크기: <span id="size-value">48</span>px</label>

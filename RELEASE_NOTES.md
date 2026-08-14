@@ -1,5 +1,15 @@
 # Release Notes
 
+## v2.6 (2026-08-14)
+
+### ✨ New Features
+
+- **Captive Portal (AP mode)** — while running as an access point, the stick now answers every DNS query with its own IP (`192.168.4.1`) and redirects any non-local HTTP request to the web UI. Connect a phone/PC to `POV_Stick_AP` and the configuration page opens automatically in the browser — no need to type `http://192.168.4.1` manually
+  - Uses the ESP32 core's built-in AsyncUDP-based `DNSServer` — no extra library install, no `loop()` polling, and DNS keeps answering even while `display_pov()` blocks the main loop
+  - AP mode only: DNS spoofing is disabled in STA mode so normal network traffic is unaffected
+
+---
+
 ## v2.5.1 (2026-08-02)
 
 ### 🐛 Bug Fixes
