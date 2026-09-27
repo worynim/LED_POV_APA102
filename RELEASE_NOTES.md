@@ -1,5 +1,16 @@
 # Release Notes
 
+## v2.7 (2026-09-28)
+
+### ✨ New Features
+
+- **Image slot compaction (슬롯 구멍 메우기)** — `compact_image_slots()` now runs at boot and after every web delete, renaming images down so used slots are contiguous from slot 0. Add/delete cycles no longer leave holes in the middle; the web UI numbering and the LED index indicator stay consistent
+- **Image numbering in web UI** — the image list now shows a circular badge with each image's 1-based number (matching the LED index indicator count) before the thumbnail
+- **7-color image index indicator** — `indicate_image_index()` now lights the (index+1) LEDs in a repeating R → Y → G → C → B → M → W color cycle instead of plain white, so the number of lit LEDs (current image index) is easy to count at a glance. Applies to both button short-press and tap-to-cycle feedback
+- **Tap-to-cycle images (바닥 두드림으로 이미지 전환)** — knocking the stick's bottom on a surface advances to the next image, same as a button short press. Distinguishes taps from swings by rate-of-change: the per-sample (1ms) change of the acceleration magnitude `sqrt(ax²+ay²+az²)` (computed from the 3-axis accel already read by `getMotion6()`) exceeds `TAP_DELTA_THRESHOLD` only for a tap's 1–2ms shock impulse — a swing's direction reversal, although far from 1g, changes magnitude gradually and never triggers. One tap = one switch: a spike counts only when it starts from a quiet state (`|mag − 1g|` ≤ `TAP_QUIET_LSB`), so a rebound second spike after the cooldown is rejected. Each tap switches immediately and the image index indicator lights instantly — the indicator (`indicate_image_index()`) is **non-blocking** (no `delay()`; the 500ms off is scheduled via `indicator_off_time` and cleared by `update_image_indicator()` in the main loop), so rapid taps (톡톡톡) are never lost and Wi-Fi/button handling keeps running while it is lit. Guards prevent false positives: 100ms cooldown (one tap's bounce = one event), 300ms tap block after each POV render (swing end-deceleration), sample-gap skip after loop blocking, and per-sample reference updates so a stale post-load peak can never inflate a fake Δ. `TAP_DEBUG 1` enables Serial Plotter output for threshold tuning (`TAP_DELTA_THRESHOLD`, default 10000 raw LSB ≈ 0.61g/ms at ±2g)
+
+---
+
 ## v2.6 (2026-08-14)
 
 ### ✨ New Features

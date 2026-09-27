@@ -10,16 +10,17 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 
 - **72-LED column** — vertical resolution of the displayed image
 - **Motion-synced rendering** — MPU6050 gyro detects zero-crossings to trigger each column refresh
+- **Tap-to-cycle images** — knock the stick's bottom on a surface to advance to the next image; rapid taps (톡톡톡) cycle multiple images. Tap vs. swing is distinguished by acceleration rate-of-change, so swinging never triggers it
 - **Wi-Fi Dual Mode (STA & AP)** — connects to home/office router (STA mode) or creates standalone access point (`POV_Stick_AP`) with automatic fallback
 - **On-Device IP POV Display** — ESP32 automatically generates a 2-line POV image of its local IP address; toggle display anytime by long-pressing the button
 - **Wi-Fi Network Scanner** — scan and select nearby Wi-Fi APs directly from the web interface
 - **Captive Portal (AP mode)** — connect a phone/PC to `POV_Stick_AP` and the web UI opens automatically (DNS spoofing + HTTP redirect); no need to type `192.168.4.1`
 - **HSV color processing** — adjustable saturation/brightness sliders in the web UI (defaults ×1.7 / ×0.3) for better POV appearance
 - **Custom APA102 driver** — 20 MHz hardware SPI for fast LED data transfer (no FastLED library needed)
-- **Multi‑image storage** — up to 20 images stored on LittleFS, switchable via button or web UI (slot 19 reserved for IP display)
+- **Multi‑image storage** — up to 20 images stored on LittleFS, switchable via button, tap, or web UI (slot 19 reserved for IP display). Slots auto-compact at boot and on delete, so numbering never has gaps
 - **Text mode** — type text directly in web UI and display on the POV stick (multi‑line, 10 fonts, custom font file loading)
-- **Button interaction** — short press (< 1s) cycles images with LED bar index indicator; 1-second long press (with LED #1 red indicator) toggles IP display
-- **Web image management** — browse saved images with pixel‑accurate thumbnails, select or delete directly
+- **Button interaction** — short press (< 1s) cycles images with a non-blocking 7-color LED index indicator (R Y G C B M W cycle — count color groups to read the index); 1-second long press (with LED #1 red indicator) toggles IP display
+- **Web image management** — browse saved images with numbered badges, pixel‑accurate thumbnails; select or delete directly (deleting re-compacts slot numbers)
 - **Image name editing** — rename before upload; works with Mac, Windows, iOS, and Android browsers
 
 ---
@@ -58,13 +59,20 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 3. Drag & drop an image (or tap to choose on mobile) — the browser resizes it to **72 px tall** (max 300 px wide), processes colors in HSV space (saturation ×1.7, brightness ×0.3), and uploads the raw binary.
 4. The ESP32 saves the image to LittleFS (`/img/N.raw`) and immediately loads it into SRAM.
 5. The web page automatically refreshes the image list showing a **pixel‑accurate thumbnail**, the file name, and resolution.
-6. Use the **button** (GPIO9) to cycle through saved images — the LED bar lights up `(index + 1)` LEDs to show the current position.
+6. Use the **button** (GPIO9) to cycle through saved images — the LED bar lights up `(index + 1)` LEDs in a 7-color cycle (R Y G C B M W) to show the current position. You can also **knock the stick's bottom on a table** to advance to the next image.
 
 ### 2. Motion Detection
 - The MPU6050 generates interrupts at **1 kHz** (data‑ready).
 - The firmware reads the **Z‑axis gyroscope value (`gz`)** on every interrupt.
 - A **zero‑crossing** (sign change of `gz`) with a delta ≥ 400 triggers a swing event.
 - Swing direction is determined: `gz < 0` → left‑to‑right, `gz > 0` → right‑to‑left.
+
+### 2.5 Tap Detection (knock to cycle)
+- The 3‑axis accelerometer data (read alongside the gyro, previously discarded) is combined into a total magnitude `sqrt(ax²+ay²+az²)`.
+- A **tap's shock wave is a 1–2 ms impulse**, so its per‑sample (1 ms) magnitude change far exceeds `TAP_DELTA_THRESHOLD`; a swing's turnaround changes magnitude gradually and never does.
+- A spike counts as a tap only when the stick was **quiet before it** (`|mag − 1g|` ≤ `TAP_QUIET_LSB`) — rebound ringing after a tap can't double‑trigger.
+- Each tap advances to the next image instantly; the LED index indicator is non‑blocking, so rapid taps are never lost.
+- Set `TAP_DEBUG 1` and use the Arduino Serial Plotter to view tap impulse magnitudes when tuning `TAP_DELTA_THRESHOLD`.
 
 ### 3. POV Rendering
 - Only the **middle 60 %** of each swing is used for display (first/last 20 % blanked to avoid cropping at turnaround points).
@@ -84,7 +92,9 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 | `ONBOARD_LED_PIN` | 8 | Status LED pin |
 | `SW_PIN` | 9 | Button pin (image cycle) |
 | `INTERRUPT_PIN` | 0 | MPU6050 interrupt pin |
-| `MAX_IMAGES` | 20 | Number of image slots |
+| `MAX_IMAGES` | 20 | Number of image slots (slot 19 = IP display) |
+| `TAP_DELTA_THRESHOLD` | 10000 | Tap impulse threshold: per‑sample (1 ms) change of accel magnitude (raw LSB, ≈ 0.61 g/ms at ±2 g) |
+| `TAP_QUIET_LSB` | 4000 | Quiet gate: accel magnitude within this of 1 g counts as stationary |
 | `MAX_IMG_NAME_LEN` | 64 | Max file name length (bytes; accommodates NFD-encoded Korean) |
 | `ap_ssid` | `"POV_Stick_AP"` | Wi‑Fi AP SSID |
 | SPI frequency | 20 MHz | APA102 LED data rate |
@@ -155,7 +165,7 @@ The device exposes a simple HTTP API for the web interface:
 - The stick creates the `POV_Stick_AP` Wi‑Fi network.
 - Connect — the captive portal auto-opens the web interface in the browser (or browse to `http://192.168.4.1`) to upload an image.
 - Once an image is uploaded, it is saved to LittleFS and loaded on every subsequent boot.
-- Use the GPIO9 button to cycle through saved images.
+- Use the GPIO9 button (or knock the stick's bottom) to cycle through saved images.
 
 ---
 
@@ -163,11 +173,12 @@ The device exposes a simple HTTP API for the web interface:
 
 ```
 LED_POV_APA102/
-├── LED_POV_APA102.ino    # Main firmware (setup, loop, motion detection, POV rendering,
-│                         # APA102 SPI driver, web server, multi‑image storage, button handling,
-│                         # AP-mode captive portal)
+├── LED_POV_APA102.ino    # Main firmware (setup, loop, motion detection [swing + tap],
+│                         # POV rendering, APA102 SPI driver, web server, multi‑image storage
+│                         # with slot compaction, button handling, AP-mode captive portal)
 ├── webpage.h             # HTML/CSS/JS page served by the web server (browser‑side image
-│                         # processing, resize, color transform, upload, thumbnail rendering)
+│                         # processing, resize, color transform, upload, thumbnail rendering,
+│                         # numbered image list)
 ├── PLAN.md               # Hardware design notes and implementation plan (Korean)
 ├── RELEASE_NOTES.md      # Version history and changelog
 └── README.md             # This file
@@ -179,9 +190,12 @@ LED_POV_APA102/
 ├── 0.raw                 # Image data (2‑byte header + RGB pixels)
 ├── 1.raw
 ├── ...
-├── 19.raw                # Up to 20 images (text or picture)
-└── info.txt              # Metadata (current index, file names)
+├── 19.raw                # Up to 20 images (slot 19 = auto‑generated IP display)
+├── info.txt              # Metadata (current index, count, file names)
+└── info.txt.tmp          # Atomic-save temporary file
 ```
+
+Slots are kept **contiguous from 0**: `compact_image_slots()` runs at boot and after every deletion, renaming images down to fill any holes. The Nth entry in the web list therefore always equals slot N−1 and lights N indicator LEDs.
 
 ---
 

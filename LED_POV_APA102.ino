@@ -72,6 +72,33 @@ unsigned long swing_duration = 200;  // 기본 스윙 시간 (ms)
 bool swing_direction = false;        // true: 좌->우, false: 우->좌
 #define SWING_THRESHOLD 400          // 스윙 방향 전환 감지 임계값
 
+// 정수 제곱근 (부동소수점 회피): 32비트 입력의 floor(sqrt(x))
+int32_t isqrt32(int32_t x) {
+  if (x <= 0) return 0;
+  int32_t r = (int32_t)sqrtf((float)x);
+  while (r > 0 && (int64_t)r * r > (int64_t)x) r--;
+  while ((int64_t)(r + 1) * (r + 1) <= (int64_t)x) r++;
+  return r;
+}
+
+// 탭(바닥 두드림) 감지 변수
+// 판정 원리: 탭 충격파는 1~2ms 안에 급상승하는 임펄스이므로 1 샘플(1ms)당
+// 합성가속도 변화량이 매우 큼. 스윙 방향 전환은 수십 ms에 걸쳐 완만하게 변하므로
+// 단위시간당 변화량이 작음 → 이 차이로 탭과 흔들기를 구분
+#define TAP_1G_LSB 16384             // 1g (중력) 크기, raw ±2g 풀스케일 기준
+#define TAP_DELTA_THRESHOLD 10000     // 탭 판정 임계값: 1 샘플(1ms)당 합성가속도 변화량 (약 0.61g/ms)
+#define TAP_QUIET_LSB 4000           // '조용한 상태' 판정: |mag−1g| 이 이하면 정지로 봄 (약 0.24g)
+#define TAP_COOLDOWN_MS 100          // 한 번의 탭 잔진동(바운스) 병합 시간 (ms)
+#define TAP_SWING_GUARD_MS 300       // POV 렌더링 직후 탭 감지 무시 시간 (ms)
+#define TAP_SAMPLE_GAP_MS 50         // 샘플 공백 판정 기준 (공백 후 첫 샘플은 비교 생략 — 기준은 갱신됨)
+#define TAP_DEBUG 0                  // 1: 시리얼 플로터에 1ms당 변화량 출력 (임계값 튜닝용)
+
+int32_t prev_mag_val = TAP_1G_LSB;        // 이전 샘플의 합성가속도 크기 (부팅 직후는 정지 상태 가정)
+bool prev_sample_quiet = true;            // 이전 샘플이 조용했는지 (탭은 정지 상태에서 시작하는 급변만 인정)
+unsigned long last_mpu_poll_time = 0;     // 마지막 MPU 샘플 처리 시각 (샘플 공백 감지)
+unsigned long last_accel_spike_time = 0;  // 마지막 탭 감지 시각 (쿨다운)
+unsigned long last_pov_time = 0;          // 마지막 POV 렌더링 시작 시각 (스윙 가드)
+
 // --- 이미지 업로드 임시 파일 포인터 및 상태 플래그 ---
 File* uploadFile = nullptr;
 volatile bool is_uploading = false;
@@ -179,6 +206,50 @@ void delete_image(uint8_t index) {
 
   save_image_info();
   Serial.printf("[LittleFS] 이미지 %d 삭제됨 (남은 이미지: %d)\n", index, image_count);
+}
+
+// --- 슬롯 압축: 사용 중인 이미지를 0번부터 구멍 없이 재배치 ---
+// 추가/삭제 반복으로 중간 슬롯이 비는 것을 방지. 부팅 시와 삭제 후에 호출.
+// 리네임 실패 시 해당 이미지는 폐기 처리(빈 슬롯으로 기록)해 상태 일관성 유지.
+void compact_image_slots() {
+  bool changed = false;
+  int write_pos = 0;  // 다음 채울 위치 (IP 전용 슬롯은 건너뜀)
+
+  for (int read_pos = 0; read_pos < MAX_IMAGES; read_pos++) {
+    if (read_pos == IP_IMAGE_SLOT) continue;
+    if (!image_slots_used[read_pos]) continue;
+
+    // write_pos는 read_pos를 따라가며 IP 슬롯을 건너뛴다
+    while (write_pos == IP_IMAGE_SLOT) write_pos++;
+
+    if (write_pos != read_pos) {
+      String old_path = get_image_path(read_pos);
+      String new_path = get_image_path(write_pos);
+
+      if (LittleFS.rename(old_path, new_path)) {
+        strncpy(image_names[write_pos], image_names[read_pos], MAX_IMG_NAME_LEN);
+        image_names[write_pos][MAX_IMG_NAME_LEN] = '\0';
+        image_names[read_pos][0] = '\0';
+        image_slots_used[write_pos] = true;
+        image_slots_used[read_pos] = false;
+        if (current_image_index == read_pos) current_image_index = write_pos;
+        changed = true;
+        Serial.printf("[LittleFS] 슬롯 %d -> %d 이동 (%s)\n", read_pos, write_pos, image_names[write_pos]);
+      } else {
+        // 리네임 실패 (파일 시스템 오류): 소스가 유효하지 않게 되므로 폐기 기록
+        Serial.printf("[LittleFS] 슬롯 %d 이동 실패 — 이미지 폐기 (%s)\n", read_pos, image_names[read_pos]);
+        LittleFS.remove(old_path);
+        image_names[read_pos][0] = '\0';
+        image_slots_used[read_pos] = false;
+        image_count--;
+        if (current_image_index == read_pos) current_image_index = 0;
+        changed = true;
+      }
+    }
+    write_pos++;
+  }
+
+  if (changed) save_image_info();
 }
 
 // --- LittleFS에서 이미지를 SRAM으로 적재하는 함수 ---
@@ -458,6 +529,9 @@ void handle_delete_image() {
     }
   }
 
+  // 삭제로 생긴 중간 빈 슬롯을 매꿈 (현재 인덱스도 압축 후 슬롯으로 갱신됨)
+  compact_image_slots();
+
   server.send(200, "application/json", "{\"status\":\"ok\"}");
   Serial.printf("[Web] 이미지 %d 삭제됨\n", idx);
 }
@@ -498,8 +572,23 @@ void handle_image_data() {
   free(buf);
 }
 
-// --- 버튼 처리 함수 ---
+// --- 이미지 인덱스 인디케이터 (넌블로킹) ---
+// indicate_image_index()가 켜고, update_image_indicator()가 loop()에서 매번
+// 갱신하며 500ms 경과 후 소등한다. delay()가 없어 스윙/웹/버튼 처리가 막히지 않음.
+unsigned long indicator_off_time = 0;     // 인디케이터 소등 예정 시각 (0 = 꺼짐)
+
 void indicate_image_index() {
+  // 인덱스 카운트를 쉽게 보도록 7색 순환 (R Y G C B M W) — 같은 색 그룹끼리 묶어 셈
+  static const CRGB INDICATOR_COLORS[7] = {
+    {255, 0, 0},    // R
+    {255, 255, 0},  // Y
+    {0, 255, 0},    // G
+    {0, 255, 255},  // C
+    {0, 0, 255},    // B
+    {255, 0, 255},  // M
+    {255, 255, 255} // W
+  };
+
   // 모든 LED 버퍼를 먼저 초기화 (이전 이미지 데이터 제거)
   for (int i = 0; i < NUM_LEDS; i++) {
     leds[i].r = 0;
@@ -507,22 +596,26 @@ void indicate_image_index() {
     leds[i].b = 0;
   }
 
-  // 하단 LED부터 (current_image_index + 1)개 점등
+  // 하단 LED부터 (current_image_index + 1)개를 7색 순환으로 점등
   int num_leds_on = current_image_index + 1;
   for (int i = 0; i < num_leds_on && i < NUM_LEDS; i++) {
-    leds[i].r = 255;
-    leds[i].g = 255;
-    leds[i].b = 255;
+    leds[i] = INDICATOR_COLORS[i % 7];
   }
   show_apa102_fast();
-  delay(500);
-  clear_apa102_fast();
+  indicator_off_time = millis() + 500;  // 소등 예약 (넌블로킹)
 }
 
-void cycle_to_next_image() {
+void update_image_indicator() {
+  if (indicator_off_time != 0 && (long)(millis() - indicator_off_time) >= 0) {
+    indicator_off_time = 0;
+    clear_apa102_fast();
+  }
+}
+
+bool cycle_to_next_image_ex(bool indicate) {
   if (image_count == 0) {
     Serial.println("[Button] 저장된 이미지가 없습니다.");
-    return;
+    return false;
   }
 
   // 현재 인덱스 이후로 순환하며 다음 사용 중인 슬롯 검색 (IP 전용 슬롯·현재 슬롯 제외)
@@ -539,15 +632,20 @@ void cycle_to_next_image() {
 
   if (next < 0) {
     Serial.println("[Button] 순환 가능한 다른 이미지가 없습니다.");
-    return;
+    return false;
   }
 
   current_image_index = next;
   showing_ip_image = false;  // IP 표시 모드 해제
   save_image_info();
   load_image_to_sram(next);
-  indicate_image_index();
+  if (indicate) indicate_image_index();
   Serial.printf("[Button] 이미지 %d (%s) 로 전환\n", next, image_names[next]);
+  return true;
+}
+
+void cycle_to_next_image() {
+  cycle_to_next_image_ex(true);  // 기존 경로(버튼): 즉시 LED 인덱스 표시
 }
 
 // --- IP POV 이미지 생성용 5x7 픽셀 폰트 (0~9, '.') ---
@@ -884,6 +982,7 @@ void setup() {
   // 다중 이미지 저장소 초기화
   ensure_img_dir();
   load_image_info();
+  compact_image_slots();  // 삭제로 생긴 중간 빈 슬롯을 0번부터 매꿈
 
   // 저장되어 있는 현재 이미지 로드
   load_image_to_sram(current_image_index);
@@ -986,6 +1085,7 @@ void display_pov() {
   }
 
   unsigned long start_pov_ms = millis();  // 렌더링 시작 시간 기록 (디버깅용)
+  last_pov_time = start_pov_ms;           // 탭 감지 스윙 가드 기준 시각 갱신
 
   // 스윙의 중앙 60% 영역을 활용하여 렌더링 (20% 여백 / 60% 표시 / 20% 여백 원복)
   unsigned long active_duration = (swing_duration * 60) / 100;
@@ -1067,6 +1167,9 @@ void loop() {
     return;
   }
 
+  // --- 이미지 인덱스 인디케이터 소등 갱신 (넌블로킹) ---
+  update_image_indicator();
+
   // --- 버튼 디바운스 처리 (누른 상태 1초 경과 시 즉시 장누름 발동) ---
   {
     bool reading = digitalRead(SW_PIN);
@@ -1120,6 +1223,47 @@ void loop() {
     gz_val = gz;  // z축 각속도
 
     unsigned long current_time = millis();
+
+    // --- 탭(바닥 두드림) 감지: 1 샘플(1ms)당 합성가속도 변화량으로 판정 ---
+    {
+      unsigned long poll_gap = current_time - last_mpu_poll_time;
+      last_mpu_poll_time = current_time;
+
+      // 이번 샘플의 합성가속도 크기
+      int32_t mag_sq = (int32_t)ax * ax + (int32_t)ay * ay + (int32_t)az * az;
+      int32_t mag = isqrt32(mag_sq);
+
+      bool comparable = (poll_gap <= TAP_SAMPLE_GAP_MS);
+      bool tap_window_open = (current_time - last_pov_time > TAP_SWING_GUARD_MS)
+                             && (current_time - last_accel_spike_time > TAP_COOLDOWN_MS);
+
+      if (comparable && tap_window_open) {
+        // 단위시간(1ms)당 변화량 — 급격한 충격파만 통과 (스윙의 완만한 전환은 걸러짐)
+        int32_t delta_mag = abs(mag - prev_mag_val);
+
+#if TAP_DEBUG
+        Serial.println(delta_mag);  // 시리얼 플로터용 (임계값 튜닝)
+#endif
+
+        // 탭 1회 = 전환 1회: 탭은 '정지 상태에서 시작하는' 급변뿐 인정.
+        // 쿨다운이 지나도 잔진동/반동의 두 번째 스파이크는 이미 흔들리는 중에
+        // 발생하므로(이전 샘플이 조용하지 않음) 여기서 걸러짐
+        if (delta_mag > TAP_DELTA_THRESHOLD && prev_sample_quiet) {
+          last_accel_spike_time = current_time;
+
+          if (cycle_to_next_image_ex(true)) {          // 전환 + 인디케이터 즉시 표시 (넌블로킹)
+            Serial.printf("[Tap] 충격 감지 (Δ%ld/ms, |a|=%ld) -> 다음 이미지\n", (long)delta_mag, (long)mag);
+          }
+        }
+      }
+
+      // '조용한 상태' 갱신 (판정과 무관하게 매 샘플): |mag−1g| 이 작으면 정지로 봄
+      prev_sample_quiet = (abs(mag - TAP_1G_LSB) <= TAP_QUIET_LSB);
+
+      // 기준값은 매 샘플 무조건 갱신 — 공백 직후 첫 샘플(비교는 생략)도 기준으로
+      // 써야 다음 샘플이 로드 이전의 오래된 peak와 비교되는 가짜 Δ를 막을 수 있음
+      prev_mag_val = mag;
+    }
 
     // 영점교차 + 델타 ≥ 400 → 스윙 방향 전환 감지
     if ((prev_gz_val > 0 && gz_val < 0) || (prev_gz_val < 0 && gz_val > 0)) {

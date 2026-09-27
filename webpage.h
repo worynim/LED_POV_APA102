@@ -275,6 +275,23 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             border-color: var(--accent-color);
             background: rgba(102, 252, 241, 0.08);
         }
+        .image-item .num-badge {
+            flex-shrink: 0;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            color: #04202e;
+            font-weight: 700;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 0.7rem;
+        }
+        .image-item.current .num-badge {
+            box-shadow: 0 0 8px var(--accent-color);
+        }
         .image-item .thumb {
             width: 72px;
             height: 72px;
@@ -1367,10 +1384,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 currentInfoEl.style.display = 'none';
             }
 
-            data.images.forEach(img => {
+            data.images.forEach((img, order) => {
                 const item = document.createElement('div');
                 item.className = 'image-item';
                 if (img.index === data.current) item.classList.add('current');
+
+                // 슬롯 번호 배지 (1부터 시작하는 순번, LED 인디케이터 개수와 동일한 기준)
+                const numBadge = document.createElement('div');
+                numBadge.className = 'num-badge';
+                numBadge.textContent = order + 1;
 
                 // 썸네일 캔버스
                 const thumbCanvas = document.createElement('canvas');
@@ -1408,6 +1430,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
                 actions.appendChild(selectBtn);
                 actions.appendChild(deleteBtn);
+                item.appendChild(numBadge);
                 item.appendChild(thumbCanvas);
                 item.appendChild(infoDiv);
                 item.appendChild(actions);
