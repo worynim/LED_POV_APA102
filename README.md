@@ -4,6 +4,8 @@ A persistence-of-vision (POV) display stick built with an **ESP32-C3** microcont
 
 > **POV (Persistence of Vision) 막대** — ESP32-C3와 72개의 APA102 LED, MPU6050 IMU 센서를 사용하여 막대를 흔들면 공중에 이미지를 띄웁니다.
 
+https://youtube.com/shorts/d7gMYBo_81c
+
 ---
 
 ## Features
